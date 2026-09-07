@@ -13,6 +13,7 @@ from repobrain.models.symbols import (
     PythonRepositoryAnalysis,
     RelationshipType,
     ResolutionType,
+    SymbolSearchResult,
     SymbolType,
 )
 
@@ -30,4 +31,5 @@ __all__ = [
     "RelationshipType",
     "ResolutionType",
     "SymbolType",
+    "SymbolSearchResult",
 ]

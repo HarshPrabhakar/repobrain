@@ -156,3 +156,33 @@ class PythonRepositoryAnalysis(BaseModel):
     errors: list[ParseError] = Field(
         default_factory=list
     )
+
+
+class SymbolSearchResult(BaseModel):
+    """
+    One symbol-search result returned by Phase 3A.
+    """
+
+    symbol_id: str
+
+    name: str
+    qualified_name: str
+    fully_qualified_name: str
+
+    symbol_type: SymbolType
+
+    module: str
+
+    file_id: str
+
+    start_line: int = Field(ge=1)
+    end_line: int = Field(ge=1)
+
+    score: float = Field(
+        ge=0.0,
+        le=1.0,
+    )
+
+    match_type: str
+
+    reason: str

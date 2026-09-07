@@ -13,16 +13,20 @@ class SymbolIndex:
     """
     Deterministic repository-wide symbol lookup index.
 
-    The SymbolIndex does not perform fuzzy matching or semantic reasoning.
+    The SymbolIndex does not perform fuzzy matching,
+    semantic search, embeddings, or LLM reasoning.
 
-    It provides exact structural lookup over symbols discovered during
-    Phase 2 AST extraction.
+    It provides exact structural lookup over symbols
+    discovered during Phase 2 AST extraction.
     """
 
     def __init__(
         self,
         symbols: Iterable[CodeSymbol],
     ) -> None:
+        """
+        Build a symbol index from repository symbols.
+        """
 
         self._by_id: dict[
             str,
@@ -47,9 +51,9 @@ class SymbolIndex:
         for symbol in symbols:
             self.add(symbol)
 
-    # ---------------------------------------------------------
+    # =========================================================
     # Construction
-    # ---------------------------------------------------------
+    # =========================================================
 
     def add(
         self,
@@ -57,7 +61,30 @@ class SymbolIndex:
     ) -> None:
         """
         Add one symbol to the index.
+
+        Symbols are indexed by:
+
+        - stable symbol ID
+        - exact qualified name
+        - short name
+        - module
         """
+
+        existing = self._by_id.get(
+            symbol.symbol_id
+        )
+
+        if existing is not None:
+            # If the same exact symbol is added again,
+            # avoid duplicating secondary indexes.
+            if existing == symbol:
+                return
+
+            raise ValueError(
+                "Duplicate symbol_id detected with "
+                "different symbol data: "
+                f"{symbol.symbol_id}"
+            )
 
         self._by_id[
             symbol.symbol_id
@@ -75,9 +102,9 @@ class SymbolIndex:
             symbol.module
         ].append(symbol)
 
-    # ---------------------------------------------------------
-    # Lookup
-    # ---------------------------------------------------------
+    # =========================================================
+    # ID lookup
+    # =========================================================
 
     def get_by_id(
         self,
@@ -91,6 +118,10 @@ class SymbolIndex:
             symbol_id
         )
 
+    # =========================================================
+    # Qualified-name lookup
+    # =========================================================
+
     def find_by_qualified_name(
         self,
         qualified_name: str,
@@ -98,8 +129,19 @@ class SymbolIndex:
         """
         Find all symbols matching an exact qualified name.
 
-        A list is returned because Python technically permits symbols to
-        be redefined in the same scope.
+        A list is returned because Python permits definitions
+        to be redefined in the same scope.
+
+        Example:
+
+        def process():
+            pass
+
+        def process():
+            pass
+
+        Both may have the same qualified name but different
+        symbol IDs and source locations.
         """
 
         return list(
@@ -114,12 +156,16 @@ class SymbolIndex:
         qualified_name: str,
     ) -> CodeSymbol | None:
         """
-        Return a symbol only when the qualified name uniquely identifies
-        exactly one repository symbol.
+        Return a symbol only when the exact qualified name
+        identifies exactly one repository symbol.
+
+        Ambiguous matches intentionally return None.
         """
 
-        matches = self.find_by_qualified_name(
-            qualified_name
+        matches = (
+            self.find_by_qualified_name(
+                qualified_name
+            )
         )
 
         if len(matches) != 1:
@@ -127,12 +173,25 @@ class SymbolIndex:
 
         return matches[0]
 
+    # =========================================================
+    # Short-name lookup
+    # =========================================================
+
     def find_by_name(
         self,
         name: str,
     ) -> list[CodeSymbol]:
         """
-        Find repository symbols sharing the same short name.
+        Find all repository symbols sharing an exact short name.
+
+        Example:
+
+        RepositoryScanner.scan
+        SecurityScanner.scan
+
+        find_by_name("scan")
+
+        returns both symbols.
         """
 
         return list(
@@ -142,12 +201,16 @@ class SymbolIndex:
             )
         )
 
+    # =========================================================
+    # Module lookup
+    # =========================================================
+
     def find_in_module(
         self,
         module: str,
     ) -> list[CodeSymbol]:
         """
-        Return all symbols belonging to a module.
+        Return all symbols belonging to an exact module.
         """
 
         return list(
@@ -157,9 +220,9 @@ class SymbolIndex:
             )
         )
 
-    # ---------------------------------------------------------
+    # =========================================================
     # Structural context
-    # ---------------------------------------------------------
+    # =========================================================
 
     def get_parent(
         self,
@@ -167,6 +230,17 @@ class SymbolIndex:
     ) -> CodeSymbol | None:
         """
         Return the symbol's direct structural parent.
+
+        Examples:
+
+        METHOD
+        -> CLASS
+
+        CLASS
+        -> MODULE
+
+        nested FUNCTION
+        -> FUNCTION or METHOD
         """
 
         if symbol.parent_symbol_id is None:
@@ -181,28 +255,45 @@ class SymbolIndex:
         symbol: CodeSymbol,
     ) -> CodeSymbol | None:
         """
-        Walk parent relationships until the nearest containing class
-        is found.
+        Walk parent relationships until the nearest containing
+        class is found.
 
-        This also works for nested functions inside methods.
+        This also supports nested functions inside methods.
 
         Example:
 
         class Service:
+
             def outer(self):
+
                 def inner():
                     self.execute()
 
-        inner -> outer -> Service
+        Structural chain:
+
+        inner
+          ->
+        outer
+          ->
+        Service
+
+        The returned containing class is Service.
         """
 
-        current: CodeSymbol | None = symbol
+        current: CodeSymbol | None = (
+            symbol
+        )
 
         visited: set[str] = set()
 
         while current is not None:
 
-            if current.symbol_id in visited:
+            if (
+                current.symbol_id
+                in visited
+            ):
+                # Defensive protection against
+                # malformed cyclic parent links.
                 return None
 
             visited.add(
@@ -221,13 +312,39 @@ class SymbolIndex:
 
         return None
 
-    # ---------------------------------------------------------
+    # =========================================================
+    # Repository-wide access
+    # =========================================================
+
+    def all_symbols(
+        self,
+    ) -> list[CodeSymbol]:
+        """
+        Return all indexed symbols.
+
+        Python dictionaries preserve insertion order, so this
+        keeps the deterministic order in which symbols were
+        originally added to the index.
+
+        Phase 3A SymbolSearchEngine uses this public method
+        instead of accessing the private _by_id dictionary.
+        """
+
+        return list(
+            self._by_id.values()
+        )
+
+    # =========================================================
     # Statistics
-    # ---------------------------------------------------------
+    # =========================================================
 
     def __len__(
         self,
     ) -> int:
+        """
+        Return the number of indexed symbols.
+        """
+
         return len(
             self._by_id
         )
