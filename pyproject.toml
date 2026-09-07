@@ -1,0 +1,23 @@
+[project]
+name = "repobrain"
+version = "0.1.0"
+description = "Agentic repository intelligence system"
+requires-python = ">=3.11"
+
+dependencies = [
+    "pydantic>=2.8,<3.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q"
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
