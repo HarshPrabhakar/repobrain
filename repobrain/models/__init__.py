@@ -38,6 +38,13 @@ from repobrain.models.graph import (
     GraphTraversalStep,
 )
 
+from repobrain.models.hybrid import (
+    GraphRetrievalEvidence,
+    HybridSearchResult,
+    RetrievalChannel,
+    RetrievalEvidence,
+)
+
 __all__ = [
     "FileMetadata",
     "RepositoryMetadata",
@@ -64,4 +71,9 @@ __all__ = [
     "GraphNode",
     "GraphStats",
     "GraphTraversalStep",
+
+    "GraphRetrievalEvidence",
+    "HybridSearchResult",
+    "RetrievalChannel",
+    "RetrievalEvidence",
 ]

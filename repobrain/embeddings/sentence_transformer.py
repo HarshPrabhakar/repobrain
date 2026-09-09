@@ -1,20 +1,21 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import numpy as np
 import torch
-
-from sentence_transformers import (
-    SentenceTransformer,
-)
+from sentence_transformers import SentenceTransformer
 
 from repobrain.embeddings.base import (
     EmbeddingProvider,
 )
 
 
-DEFAULT_EMBEDDING_MODEL = (
-    "nomic-ai/CodeRankEmbed"
-)
+# ============================================================================
+# Defaults
+# ============================================================================
+
+DEFAULT_EMBEDDING_MODEL = "nomic-ai/CodeRankEmbed"
 
 FALLBACK_EMBEDDING_MODEL = (
     "sentence-transformers/all-MiniLM-L6-v2"
@@ -24,293 +25,505 @@ QUERY_PREFIX = (
     "Represent this query for searching relevant code: "
 )
 
-
 DEFAULT_MAX_SEQUENCE_LENGTH = 512
-
 DEFAULT_BATCH_SIZE = 4
+
+
+# ============================================================================
+# Compatibility helpers
+# ============================================================================
+
+
+def _get_embedding_dimension_from_model(
+    model: SentenceTransformer,
+) -> int:
+    """
+    Determine embedding dimension across supported
+    SentenceTransformers versions.
+    """
+
+    # Newer API
+    get_dimension = getattr(
+        model,
+        "get_embedding_dimension",
+        None,
+    )
+
+    if callable(get_dimension):
+        dimension = get_dimension()
+
+        if dimension is not None:
+            return int(dimension)
+
+    # SentenceTransformers 5.1.x API
+    get_sentence_dimension = getattr(
+        model,
+        "get_sentence_embedding_dimension",
+        None,
+    )
+
+    if callable(get_sentence_dimension):
+        dimension = (
+            get_sentence_dimension()
+        )
+
+        if dimension is not None:
+            return int(dimension)
+
+    raise RuntimeError(
+        "Unable to determine embedding dimension "
+        "from SentenceTransformer model."
+    )
+
+
+def _normalize_device(
+    device: str | None,
+) -> str:
+    """
+    Resolve the execution device.
+    """
+
+    if (
+        device is None
+        or device.strip().lower() == "auto"
+    ):
+        return (
+            "cuda"
+            if torch.cuda.is_available()
+            else "cpu"
+        )
+
+    normalized = (
+        device.strip().lower()
+    )
+
+    if (
+        normalized.startswith("cuda")
+        and not torch.cuda.is_available()
+    ):
+        return "cpu"
+
+    return normalized
+
+
+# ============================================================================
+# Provider
+# ============================================================================
 
 
 class SentenceTransformerEmbeddingProvider(
     EmbeddingProvider
 ):
     """
-    Local Sentence Transformers embedding provider.
+    SentenceTransformer embedding provider used by RepoBrain.
 
-    Phase 3C.1 defaults to a code-specialized Jina model.
+    Default model:
+        nomic-ai/CodeRankEmbed
 
-    Important:
-    The Jina model supports a long context window, but allowing
-    repository chunks to use the full context can require huge
-    attention tensors and exhaust GPU VRAM.
-
-    RepoBrain therefore applies a conservative semantic-search
-    sequence-length limit.
-
-    Embeddings are L2-normalized so FAISS IndexFlatIP behaves
-    like cosine similarity.
+    Behavior:
+        - query-specific CodeRankEmbed instruction
+        - raw document/code embeddings
+        - normalized vectors
+        - bounded sequence length
+        - GPU execution when available
+        - conservative batching
+        - CUDA OOM retry
     """
 
     def __init__(
         self,
         model_name: str = DEFAULT_EMBEDDING_MODEL,
         *,
-        device: str | None = None,
+        device: str | None = "auto",
         batch_size: int = DEFAULT_BATCH_SIZE,
-        max_seq_length: int = DEFAULT_MAX_SEQUENCE_LENGTH,
-        trust_remote_code: bool | None = None,
+        max_sequence_length: int = (
+            DEFAULT_MAX_SEQUENCE_LENGTH
+        ),
+        normalize_embeddings: bool = True,
+        trust_remote_code: bool = True,
+        query_prefix: str = QUERY_PREFIX,
     ) -> None:
+
+        normalized_model_name = (
+            model_name.strip()
+        )
+
+        if not normalized_model_name:
+            raise ValueError(
+                "model_name must not be empty."
+            )
 
         if batch_size <= 0:
             raise ValueError(
-                "batch_size must be greater than zero."
+                "batch_size must be > 0."
             )
 
-        if max_seq_length <= 0:
+        if max_sequence_length <= 0:
             raise ValueError(
-                "max_seq_length must be greater than zero."
+                "max_sequence_length must be > 0."
             )
 
-        self._model_name = model_name
+        # ------------------------------------------------------------
+        # Store configuration using private backing fields.
+        #
+        # model_name and dimension are abstract properties defined
+        # by EmbeddingProvider, so do NOT assign directly to
+        # self.model_name or self.dimension.
+        # ------------------------------------------------------------
 
-        self.batch_size = batch_size
-
-        self.max_seq_length = (
-            max_seq_length
+        self._model_name = (
+            normalized_model_name
         )
 
-        # -----------------------------------------------------
-        # Device selection
-        # -----------------------------------------------------
-
-        if device is None:
-
-            device = (
-                "cuda"
-                if torch.cuda.is_available()
-                else "cpu"
+        self._device = (
+            _normalize_device(
+                device
             )
+        )
 
-        self.device = device
+        self._batch_size = int(
+            batch_size
+        )
 
-        # -----------------------------------------------------
-        # Remote-code policy
-        # -----------------------------------------------------
+        self._max_sequence_length = int(
+            max_sequence_length
+        )
 
-        if trust_remote_code is None:
+        self._normalize_embeddings = bool(
+            normalize_embeddings
+        )
 
-            trust_remote_code = (
-                model_name
-                == DEFAULT_EMBEDDING_MODEL
-            )
-
-        self.trust_remote_code = (
+        self._trust_remote_code = bool(
             trust_remote_code
         )
 
-        # -----------------------------------------------------
-        # Load embedding model
-        # -----------------------------------------------------
-
-        self.model = SentenceTransformer(
-            model_name,
-            device=device,
-            trust_remote_code=(
-                trust_remote_code
-            ),
+        self._query_prefix = (
+            query_prefix
         )
 
-        # -----------------------------------------------------
-        # IMPORTANT VRAM SAFETY LIMIT
-        # -----------------------------------------------------
+        # ------------------------------------------------------------
+        # Load SentenceTransformer
+        # ------------------------------------------------------------
 
-        self.model.max_seq_length = (
-            self.max_seq_length
+        self._model = (
+            SentenceTransformer(
+                self._model_name,
+                device=self._device,
+                trust_remote_code=(
+                    self._trust_remote_code
+                ),
+            )
         )
 
-        # -----------------------------------------------------
-        # Embedding dimension
-        # -----------------------------------------------------
+        # ------------------------------------------------------------
+        # Limit sequence length
+        # ------------------------------------------------------------
 
-        dimension = (
-            self.model
-            .get_embedding_dimension()
-        )
-
-        if dimension is None:
-
-            raise RuntimeError(
-                "Embedding model did not report "
-                "an embedding dimension."
+        if hasattr(
+            self._model,
+            "max_seq_length",
+        ):
+            self._model.max_seq_length = (
+                self._max_sequence_length
             )
 
-        self._dimension = int(
-            dimension
+        # ------------------------------------------------------------
+        # Resolve embedding dimension once
+        # ------------------------------------------------------------
+
+        self._dimension = (
+            _get_embedding_dimension_from_model(
+                self._model
+            )
         )
 
-    # =========================================================
-    # Metadata
-    # =========================================================
-
-    @property
-    def dimension(
-        self,
-    ) -> int:
-
-        return self._dimension
+    # ========================================================================
+    # Required EmbeddingProvider properties
+    # ========================================================================
 
     @property
     def model_name(
         self,
     ) -> str:
+        """
+        Name of the underlying embedding model.
+        """
 
         return self._model_name
 
-    # =========================================================
-    # Document embeddings
-    # =========================================================
-
-    def embed_documents(
+    @property
+    def dimension(
         self,
-        texts: list[str],
+    ) -> int:
+        """
+        Embedding vector dimension.
+        """
+
+        return self._dimension
+
+    # ========================================================================
+    # Additional provider metadata
+    # ========================================================================
+
+    @property
+    def device(
+        self,
+    ) -> str:
+        return self._device
+
+    @property
+    def batch_size(
+        self,
+    ) -> int:
+        return self._batch_size
+
+    @property
+    def max_sequence_length(
+        self,
+    ) -> int:
+        return self._max_sequence_length
+
+    @property
+    def normalize_embeddings(
+        self,
+    ) -> bool:
+        return self._normalize_embeddings
+
+    # ========================================================================
+    # Compatibility method
+    # ========================================================================
+
+    def get_embedding_dimension(
+        self,
+    ) -> int:
+        """
+        Compatibility method used by RepoBrain components.
+        """
+
+        return self._dimension
+
+    # ========================================================================
+    # Query embedding
+    # ========================================================================
+
+    def embed_query(
+        self,
+        query: str,
     ) -> np.ndarray:
 
-        if not texts:
+        normalized_query = (
+            query.strip()
+        )
 
+        if not normalized_query:
+            raise ValueError(
+                "query must not be empty."
+            )
+
+        prepared_query = (
+            self._prepare_query(
+                normalized_query
+            )
+        )
+
+        embeddings = self._encode(
+            [
+                prepared_query,
+            ]
+        )
+
+        return embeddings[0]
+
+    # ========================================================================
+    # Multiple query embeddings
+    # ========================================================================
+
+    def embed_queries(
+        self,
+        queries: Sequence[str],
+    ) -> np.ndarray:
+
+        prepared: list[str] = []
+
+        for query in queries:
+            normalized = (
+                str(query).strip()
+            )
+
+            if not normalized:
+                raise ValueError(
+                    "queries must not contain "
+                    "empty strings."
+                )
+
+            prepared.append(
+                self._prepare_query(
+                    normalized
+                )
+            )
+
+        if not prepared:
             return np.empty(
                 (
                     0,
-                    self.dimension,
+                    self._dimension,
                 ),
                 dtype=np.float32,
             )
 
-        # Clear stale allocations before a large embedding pass.
-        self._clear_cuda_cache()
-
-        try:
-
-            embeddings = (
-                self.model.encode(
-                    texts,
-                    batch_size=(
-                        self.batch_size
-                    ),
-                    show_progress_bar=False,
-                    convert_to_numpy=True,
-                    normalize_embeddings=True,
-                )
-            )
-
-        except torch.OutOfMemoryError as exc:
-
-            self._clear_cuda_cache()
-
-            raise RuntimeError(
-                "CUDA ran out of memory while "
-                "embedding repository chunks. "
-                "Try reducing batch_size or "
-                "max_seq_length. "
-                f"Current batch_size="
-                f"{self.batch_size}, "
-                f"max_seq_length="
-                f"{self.max_seq_length}."
-            ) from exc
-
-        finally:
-
-            self._clear_cuda_cache()
-
-        return self._ensure_float32(
-            embeddings
+        return self._encode(
+            prepared
         )
 
-    # =========================================================
-    # Query embedding
-    # =========================================================
+    # ========================================================================
+    # Document embedding
+    # ========================================================================
 
-    def embed_query(
+    def embed_document(
         self,
-        text: str,
+        document: str,
     ) -> np.ndarray:
 
-        query = text.strip()
+        embeddings = (
+            self.embed_documents(
+                [
+                    document,
+                ]
+            )
+        )
 
-        if not query:
+        return embeddings[0]
 
-            return np.zeros(
-                self.dimension,
+    def embed_documents(
+        self,
+        documents: Sequence[str],
+    ) -> np.ndarray:
+
+        prepared = [
+            str(document)
+            for document
+            in documents
+        ]
+
+        if not prepared:
+            return np.empty(
+                (
+                    0,
+                    self._dimension,
+                ),
                 dtype=np.float32,
             )
 
-        if (
-            self.model_name
-            == DEFAULT_EMBEDDING_MODEL
-        ):
-
-            query = (
-                QUERY_PREFIX
-                + query
-            )
-
-        self._clear_cuda_cache()
-
-        try:
-
-            embedding = (
-                self.model.encode(
-                    [query],
-                    batch_size=1,
-                    show_progress_bar=False,
-                    convert_to_numpy=True,
-                    normalize_embeddings=True,
-                )[0]
-            )
-
-        except torch.OutOfMemoryError as exc:
-
-            self._clear_cuda_cache()
-
-            raise RuntimeError(
-                "CUDA ran out of memory while "
-                "embedding the query."
-            ) from exc
-
-        finally:
-
-            self._clear_cuda_cache()
-
-        return self._ensure_float32(
-            embedding
+        return self._encode(
+            prepared
         )
 
-    # =========================================================
-    # Helpers
-    # =========================================================
+    # ========================================================================
+    # Query preparation
+    # ========================================================================
 
-    @staticmethod
-    def _ensure_float32(
-        array: np.ndarray,
+    def _prepare_query(
+        self,
+        query: str,
+    ) -> str:
+
+        if (
+            self._model_name
+            == DEFAULT_EMBEDDING_MODEL
+        ):
+            return (
+                f"{self._query_prefix}"
+                f"{query}"
+            )
+
+        return query
+
+    # ========================================================================
+    # Encoding
+    # ========================================================================
+
+    def _encode(
+        self,
+        texts: Sequence[str],
     ) -> np.ndarray:
 
-        return np.ascontiguousarray(
-            array,
+        if not texts:
+            return np.empty(
+                (
+                    0,
+                    self._dimension,
+                ),
+                dtype=np.float32,
+            )
+
+        try:
+            embeddings = (
+                self._model.encode(
+                    list(texts),
+                    batch_size=(
+                        self._batch_size
+                    ),
+                    convert_to_numpy=True,
+                    normalize_embeddings=(
+                        self._normalize_embeddings
+                    ),
+                    show_progress_bar=False,
+                )
+            )
+
+        except torch.cuda.OutOfMemoryError:
+
+            if not self._device.startswith(
+                "cuda"
+            ):
+                raise
+
+            torch.cuda.empty_cache()
+
+            fallback_batch_size = max(
+                1,
+                self._batch_size // 2,
+            )
+
+            embeddings = (
+                self._model.encode(
+                    list(texts),
+                    batch_size=(
+                        fallback_batch_size
+                    ),
+                    convert_to_numpy=True,
+                    normalize_embeddings=(
+                        self._normalize_embeddings
+                    ),
+                    show_progress_bar=False,
+                )
+            )
+
+        array = np.asarray(
+            embeddings,
             dtype=np.float32,
         )
 
-    def _clear_cuda_cache(
-        self,
-    ) -> None:
-        """
-        Release unused cached CUDA blocks.
+        if array.ndim == 1:
+            array = array.reshape(
+                1,
+                -1,
+            )
 
-        This does not delete live model tensors.
-        """
+        if array.ndim != 2:
+            raise RuntimeError(
+                "Unexpected embedding shape: "
+                f"{array.shape}"
+            )
 
         if (
-            self.device.startswith(
-                "cuda"
-            )
-            and torch.cuda.is_available()
+            array.shape[1]
+            != self._dimension
         ):
+            raise RuntimeError(
+                "Embedding dimension mismatch. "
+                f"Expected {self._dimension}, "
+                f"received {array.shape[1]}."
+            )
 
-            torch.cuda.empty_cache()
+        return array

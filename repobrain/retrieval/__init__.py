@@ -27,6 +27,17 @@ from repobrain.retrieval.symbols import (
     SymbolSearchEngine,
 )
 
+from repobrain.retrieval.fusion import (
+    ReciprocalRankFusion,
+)
+
+from repobrain.retrieval.graph_expansion import (
+    GraphEvidenceExpander,
+)
+
+from repobrain.retrieval.hybrid import (
+    HybridRetrievalEngine,
+)
 
 __all__ = [
     "BM25Index",
@@ -40,4 +51,8 @@ __all__ = [
     "SemanticSourceClassifier",
     "SemanticSourceKind",
     "SymbolSearchEngine",
+
+    "GraphEvidenceExpander",
+    "HybridRetrievalEngine",
+    "ReciprocalRankFusion",
 ]
