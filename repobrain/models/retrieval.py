@@ -88,10 +88,15 @@ class LexicalSearchResult(BaseModel):
 
 class SemanticSearchResult(BaseModel):
     """
-    One Phase 3C semantic-search result.
+    One semantic-search result.
 
-    Score is cosine-style vector similarity when normalized
-    embeddings are used with FAISS inner-product search.
+    score:
+        Raw semantic similarity returned by FAISS.
+
+    ranking_score:
+        Deterministic Phase 3C.3 reranking score.
+
+    The ranking score is not a probability.
     """
 
     chunk_id: str
@@ -100,7 +105,6 @@ class SemanticSearchResult(BaseModel):
     relative_path: str
 
     symbol_id: str | None = None
-
     qualified_name: str | None = None
 
     chunk_type: ChunkType
@@ -110,6 +114,18 @@ class SemanticSearchResult(BaseModel):
     start_line: int
     end_line: int
 
+    # Raw vector similarity.
     score: float
 
     excerpt: str
+
+    # Phase 3C.3 metadata.
+    ranking_score: float | None = None
+
+    query_intent: str | None = None
+
+    source_kind: str | None = None
+
+    ranking_reasons: list[str] = Field(
+        default_factory=list
+    )

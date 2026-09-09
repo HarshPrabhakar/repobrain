@@ -23,32 +23,34 @@ from repobrain.retrieval.semantic_document import (
     SemanticCodeDocumentBuilder,
 )
 
+from repobrain.retrieval.semantic_ranking import (
+    SemanticRankingPolicy,
+)
+
+
+DEFAULT_CANDIDATE_POOL_SIZE = 50
+
+DEFAULT_CANDIDATE_MULTIPLIER = 5
+
 
 class SemanticSearchEngine:
     """
     RepoBrain semantic repository search.
 
     Phase 3C:
-        vector similarity using FAISS
+        FAISS semantic retrieval.
 
     Phase 3C.2:
-        deterministic AST-aware semantic document construction
+        deterministic AST-aware semantic documents.
 
-    Architecture:
+    Phase 3C.3:
+        deterministic query-intent and source-aware reranking.
 
-        CodeChunk
-            +
-        CodeSymbol
-            +
-        CodeRelationship
-            ↓
-        SemanticCodeDocumentBuilder
-            ↓
-        EmbeddingProvider
-            ↓
-        normalized vectors
-            ↓
-        FAISS IndexFlatIP
+    Important:
+        Raw semantic similarity remains available as result.score.
+
+        Phase 3C.3 adds result.ranking_score rather than
+        overwriting vector similarity.
     """
 
     def __init__(
@@ -56,10 +58,16 @@ class SemanticSearchEngine:
         chunks: list[CodeChunk],
         embedding_provider: EmbeddingProvider,
         *,
-        symbols: Iterable[CodeSymbol] | None = None,
+        symbols: Iterable[
+            CodeSymbol
+        ] | None = None,
         relationships: Iterable[
             CodeRelationship
         ] | None = None,
+        ranking_policy: (
+            SemanticRankingPolicy
+            | None
+        ) = None,
     ) -> None:
 
         self.chunks = list(
@@ -92,6 +100,11 @@ class SemanticSearchEngine:
                     ),
                 )
             )
+
+        self._ranking_policy = (
+            ranking_policy
+            or SemanticRankingPolicy()
+        )
 
         self._index = (
             faiss.IndexFlatIP(
@@ -151,7 +164,11 @@ class SemanticSearchEngine:
         top_k: int = 10,
         language: str | None = None,
         min_score: float | None = None,
-    ) -> list[SemanticSearchResult]:
+        rerank: bool = True,
+        candidate_pool_size: int | None = None,
+    ) -> list[
+        SemanticSearchResult
+    ]:
 
         normalized_query = (
             query.strip()
@@ -179,18 +196,47 @@ class SemanticSearchEngine:
             )
         )
 
+        # -----------------------------------------------------
+        # Candidate pool
+        # -----------------------------------------------------
+        #
+        # Reranking cannot promote a result that FAISS never
+        # returned.
+        #
+        # Example:
+        # _calculate_sha256 was previously semantic rank #18.
+        #
+        # Asking FAISS for only top 10 would make promotion
+        # impossible.
+        # -----------------------------------------------------
+
+        if candidate_pool_size is None:
+
+            candidate_pool_size = max(
+                DEFAULT_CANDIDATE_POOL_SIZE,
+                (
+                    top_k
+                    * DEFAULT_CANDIDATE_MULTIPLIER
+                ),
+            )
+
+        candidate_pool_size = max(
+            top_k,
+            candidate_pool_size,
+        )
+
         if language is None:
 
             search_k = min(
-                top_k,
+                candidate_pool_size,
                 len(self.chunks),
             )
 
         else:
 
-            # Search every candidate before applying language
-            # filtering so valid filtered results cannot be
-            # accidentally excluded.
+            # Retrieve the complete index before filtering.
+            # This guarantees enough language-specific
+            # candidates remain after filtering.
             search_k = len(
                 self.chunks
             )
@@ -205,7 +251,7 @@ class SemanticSearchEngine:
             )
         )
 
-        results: list[
+        candidates: list[
             SemanticSearchResult
         ] = []
 
@@ -222,8 +268,9 @@ class SemanticSearchEngine:
             if document_index < 0:
                 continue
 
-            if document_index >= len(
-                self.chunks
+            if (
+                document_index
+                >= len(self.chunks)
             ):
                 continue
 
@@ -238,27 +285,26 @@ class SemanticSearchEngine:
             ):
                 continue
 
-            numeric_score = float(
+            semantic_score = float(
                 score
             )
 
-            # Protect against very small numerical overshoots.
-            numeric_score = max(
+            semantic_score = max(
                 -1.0,
                 min(
                     1.0,
-                    numeric_score,
+                    semantic_score,
                 ),
             )
 
             if (
                 min_score is not None
-                and numeric_score
+                and semantic_score
                 < min_score
             ):
                 continue
 
-            results.append(
+            candidates.append(
                 SemanticSearchResult(
                     chunk_id=(
                         chunk.chunk_id
@@ -297,7 +343,7 @@ class SemanticSearchEngine:
                     ),
 
                     score=(
-                        numeric_score
+                        semantic_score
                     ),
 
                     excerpt=self._excerpt(
@@ -306,13 +352,28 @@ class SemanticSearchEngine:
                 )
             )
 
-            if (
-                len(results)
-                >= top_k
-            ):
-                break
+        # -----------------------------------------------------
+        # Phase 3C.3
+        # -----------------------------------------------------
 
-        return results
+        if rerank:
+
+            return (
+                self._ranking_policy
+                .rerank(
+                    query=(
+                        normalized_query
+                    ),
+                    results=(
+                        candidates
+                    ),
+                    top_k=top_k,
+                )
+            )
+
+        return candidates[
+            :top_k
+        ]
 
     # =========================================================
     # Semantic representation
@@ -322,14 +383,6 @@ class SemanticSearchEngine:
         self,
         chunk: CodeChunk,
     ) -> str:
-        """
-        Return text that will actually be embedded.
-
-        When Phase 3C.2 repository intelligence is supplied,
-        build an AST-aware deterministic semantic document.
-
-        Otherwise preserve the Phase 3C raw-code behavior.
-        """
 
         if (
             self._semantic_document_builder
@@ -351,13 +404,6 @@ class SemanticSearchEngine:
     def _searchable_text(
         chunk: CodeChunk,
     ) -> str:
-        """
-        Phase 3C fallback representation.
-
-        Keep this method because existing tests and callers
-        rely on raw-code semantic search when no repository
-        symbol intelligence is supplied.
-        """
 
         return chunk.text
 
@@ -456,10 +502,7 @@ class SemanticSearchEngine:
             text.split()
         )
 
-        if (
-            len(collapsed)
-            <= max_length
-        ):
+        if len(collapsed) <= max_length:
 
             return collapsed
 

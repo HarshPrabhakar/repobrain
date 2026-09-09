@@ -84,8 +84,17 @@ def parse_args() -> argparse.Namespace:
     ),
 
     parser.add_argument(
-    "--max-seq-length",
-    type=int,
+        "--no-rerank",
+        action="store_true",
+        help=(
+            "Disable Phase 3C.3 semantic "
+            "intent-aware reranking"
+        ),
+    )
+
+    parser.add_argument(
+        "--max-seq-length",
+        type=int,
     default=512,
     help=(
         "Maximum token length for each "
@@ -231,6 +240,9 @@ def main() -> int:
         args.query,
         top_k=args.top_k,
         language=args.language,
+        rerank=(
+            not args.no_rerank
+        ),
     )
 
     # ---------------------------------------------------------
@@ -312,9 +324,44 @@ def main() -> int:
             )
 
             print(
-                f"    Score   : "
+                f"    Semantic : "
                 f"{result.score:.4f}"
             )
+
+            if result.ranking_score is not None:
+
+                print(
+                    f"    Ranking  : "
+                    f"{result.ranking_score:.4f}"
+                )
+
+            if result.query_intent:
+
+                print(
+                    f"    Intent   : "
+                    f"{result.query_intent}"
+                )
+
+            if result.source_kind:
+
+                print(
+                    f"    Source   : "
+                    f"{result.source_kind}"
+                )
+
+            if result.ranking_reasons:
+
+                print(
+                    "    Reasons  :"
+                )
+
+                for reason in (
+                    result.ranking_reasons
+                ):
+
+                    print(
+                        f"               - {reason}"
+                    )
 
             print(
                 f"    Excerpt : "

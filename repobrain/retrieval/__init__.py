@@ -11,19 +11,33 @@ from repobrain.retrieval.semantic import (
     SemanticSearchEngine,
 )
 
+from repobrain.retrieval.semantic_document import (
+    SemanticCodeDocumentBuilder,
+)
+
+from repobrain.retrieval.semantic_ranking import (
+    SemanticIntentClassifier,
+    SemanticQueryIntent,
+    SemanticRankingPolicy,
+    SemanticSourceClassifier,
+    SemanticSourceKind,
+)
+
 from repobrain.retrieval.symbols import (
     SymbolSearchEngine,
 )
 
-from repobrain.retrieval.semantic_document import (
-    SemanticCodeDocumentBuilder,
-)
 
 __all__ = [
     "BM25Index",
     "BM25Tokenizer",
     "RepositoryChunkBuilder",
-    "SemanticSearchEngine",
-    "SymbolSearchEngine",
     "SemanticCodeDocumentBuilder",
+    "SemanticIntentClassifier",
+    "SemanticQueryIntent",
+    "SemanticRankingPolicy",
+    "SemanticSearchEngine",
+    "SemanticSourceClassifier",
+    "SemanticSourceKind",
+    "SymbolSearchEngine",
 ]
