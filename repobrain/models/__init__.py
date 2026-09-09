@@ -45,6 +45,13 @@ from repobrain.models.hybrid import (
     RetrievalEvidence,
 )
 
+from repobrain.models.evidence import (
+    EvidenceBundle,
+    EvidenceGraphRelation,
+    EvidenceItem,
+    EvidenceKind,
+)
+
 __all__ = [
     "FileMetadata",
     "RepositoryMetadata",
@@ -76,4 +83,9 @@ __all__ = [
     "HybridSearchResult",
     "RetrievalChannel",
     "RetrievalEvidence",
+
+    "EvidenceBundle",
+    "EvidenceGraphRelation",
+    "EvidenceItem",
+    "EvidenceKind",
 ]
