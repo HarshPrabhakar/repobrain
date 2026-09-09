@@ -52,6 +52,16 @@ from repobrain.models.evidence import (
     EvidenceKind,
 )
 
+from repobrain.models.agent import (
+    AgentAction,
+    AgentGraphFact,
+    AgentIntent,
+    AgentRunResult,
+    AgentState,
+    AgentStatus,
+    AgentStep,
+)
+
 __all__ = [
     "FileMetadata",
     "RepositoryMetadata",
@@ -88,4 +98,12 @@ __all__ = [
     "EvidenceGraphRelation",
     "EvidenceItem",
     "EvidenceKind",
+
+    "AgentAction",
+    "AgentGraphFact",
+    "AgentIntent",
+    "AgentRunResult",
+    "AgentState",
+    "AgentStatus",
+    "AgentStep",
 ]
