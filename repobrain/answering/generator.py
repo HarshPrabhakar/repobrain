@@ -343,7 +343,10 @@ class GroundedAnswerGenerator:
 
         if (
             has_repository_context
-            and not valid_citations
+            and (
+                not valid_citations
+                or invalid_citations
+            )
         ):
 
             repair_prompt = (
@@ -445,33 +448,56 @@ class GroundedAnswerGenerator:
         original_answer: str,
     ) -> str:
         """
-        Build exactly one citation-repair request.
+        Perform exactly one grounding/citation repair.
 
-        The model receives the same repository evidence again plus
-        its previous answer.
-
-        It is asked to rewrite, not extend, the answer.
+        The model must rewrite the answer using only supplied
+        repository evidence and exact citation tokens.
         """
 
         return (
             f"{original_prompt}\n\n"
-            "CITATION REPAIR\n"
-            "===============\n"
-            "Your previous answer did not contain any valid supplied "
-            "repository citations.\n\n"
-            "Rewrite the previous answer using ONLY the repository "
-            "evidence and graph facts above.\n\n"
-            "Requirements:\n"
-            "- Preserve only claims supported by the supplied context.\n"
-            "- Add [E#] after every source-backed repository claim.\n"
-            "- Add [G#] after every graph-relationship claim.\n"
-            "- Use ONLY citation IDs that appear above.\n"
-            "- Do not invent new citation IDs.\n"
-            "- Do not add new unsupported facts.\n"
-            "- If the evidence is insufficient, say so directly.\n"
-            "- Return only the rewritten answer.\n\n"
-            "PREVIOUS ANSWER\n"
-            "===============\n"
+            "GROUNDING VALIDATION FAILURE\n"
+            "============================\n\n"
+            "RepoBrain rejected your previous answer because it either "
+            "contained no valid citations or contained citation IDs that "
+            "were not supplied.\n\n"
+
+            "REWRITE CONTRACT\n"
+            "================\n"
+            "1. Return ONLY the rewritten answer.\n"
+            "2. Answer only the user's actual question.\n"
+            "3. Keep the answer concise: at most 4 short paragraphs "
+            "or bullets.\n"
+            "4. Every repository-specific factual claim MUST end with "
+            "one or more valid citation tokens.\n"
+            "5. Citation tokens must be copied EXACTLY from the supplied "
+            "SOURCE EVIDENCE or GRAPH FACTS.\n"
+            "6. Use [E#] only for source evidence.\n"
+            "7. Use [G#] only for graph facts.\n"
+            "8. NEVER invent another citation ID.\n"
+            "9. NEVER invent URLs, links, file locations, repository URLs, "
+            "or external references.\n"
+            "10. Do NOT create a References section.\n"
+            "11. Do NOT describe a citation as a hyperlink.\n"
+            "12. Remove every claim that is not directly supported by the "
+            "supplied repository context.\n"
+            "13. Do not add installation instructions, roadmap, license, "
+            "limitations, examples, or unrelated details unless explicitly "
+            "asked by the user.\n\n"
+
+            "A valid answer should look like:\n\n"
+            "RepoBrain combines deterministic repository analysis with "
+            "hybrid retrieval and grounded answer generation. [E1]\n\n"
+
+            "NOT like:\n\n"
+            "[E1] https://example.com/file\n\n"
+
+            "If the supplied context is insufficient, return exactly:\n"
+            "\"The available repository evidence is insufficient to "
+            "answer this confidently.\"\n\n"
+
+            "PREVIOUS REJECTED ANSWER\n"
+            "========================\n"
             f"{original_answer}"
         )
 

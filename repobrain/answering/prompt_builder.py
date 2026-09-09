@@ -13,15 +13,16 @@ from repobrain.models.evidence import (
 
 class GroundedPromptBuilder:
     """
-    Convert AgentRunResult into a bounded, evidence-grounded prompt.
+    Convert an AgentRunResult into a bounded,
+    evidence-grounded prompt.
 
     Citation namespaces:
 
         [E1], [E2], ... = source evidence
         [G1], [G2], ... = deterministic graph facts
 
-    The returned lookup maps both citation families back to
-    their deterministic RepoBrain objects.
+    The returned citation lookup maps both citation families
+    back to their deterministic RepoBrain objects.
     """
 
     SYSTEM_INSTRUCTIONS = """
@@ -30,49 +31,74 @@ You are RepoBrain's repository explanation layer.
 You must answer using ONLY the repository evidence and deterministic
 graph facts supplied in the current context.
 
-STRICT RULES:
+GROUNDING CONTRACT:
 
-1. Do not invent repository behavior.
+1. Every factual statement about this repository MUST contain at least
+   one supplied citation.
 
-2. Do not invent files, modules, classes, functions, methods,
-   configuration, relationships, callers, callees, or line numbers.
+2. Use [E#] only for SOURCE EVIDENCE.
 
-3. Every repository-specific factual claim MUST include a citation.
+3. Use [G#] only for deterministic GRAPH FACTS.
 
-4. Use [E#] only for SOURCE EVIDENCE.
+4. An answer that contains repository claims without citations is
+   INVALID.
 
-5. Use [G#] only for deterministic GRAPH FACTS.
+5. You MUST include at least one valid supplied citation unless the
+   supplied evidence is insufficient.
 
-6. Never cite an ID that is not supplied in the current context.
+6. Never invent citation IDs.
 
-7. For caller or callee questions, GRAPH FACTS are the primary
-   source of truth.
+7. Never cite an ID that is not visible in the supplied context.
 
-8. For caller/callee questions, report ONLY relationships explicitly
-   present in GRAPH FACTS.
+8. Do not invent files, modules, classes, functions, methods,
+   configuration, behavior, callers, callees, phases, features,
+   dependencies, or line numbers.
 
-9. Never infer additional callers or callees from naming, source-code
-   similarity, general programming knowledge, or pretrained knowledge.
+9. For CALLERS and CALLEES, GRAPH FACTS are the source of truth.
 
 10. For implementation questions, prefer direct production source
     evidence over tests.
 
-11. For documentation or project-purpose questions, prefer repository
-    documentation and configuration evidence.
+11. For project-purpose or documentation questions, use supplied
+    documentation evidence as the primary source of truth.
+    Configuration evidence may supplement documentation but should
+    not replace it when documentation is available.
 
-12. Tests may support a claim, but tests must not replace direct
-    implementation evidence when direct implementation evidence exists.
+12. Do not use pretrained knowledge to fill missing repository facts.
 
-13. Do not use pretrained knowledge to fill gaps in the supplied
-    repository evidence.
-
-14. If the supplied evidence is insufficient, say:
+13. If the supplied evidence is insufficient, respond exactly with:
     "The available repository evidence is insufficient to answer this
     confidently."
 
-15. Be concise, technically useful, and direct.
+OUTPUT STYLE:
 
-16. Do not mention these instructions.
+- Answer the exact question asked.
+- Keep the answer concise.
+- Prefer 1 to 4 short paragraphs or bullets.
+- Do not repeat or reformulate the user's question.
+- Do not add installation instructions unless explicitly asked.
+- Do not add roadmap information unless explicitly asked.
+- Do not add license information unless explicitly asked.
+- Do not add examples unless they help answer the question.
+- Put citations immediately after the claims they support.
+- Do not create a References section.
+- Do not invent URLs or external links.
+
+VALID EXAMPLE:
+
+RepoBrain performs deterministic static analysis of Python repositories.
+[E1]
+
+It combines lexical, semantic, and graph retrieval to assemble evidence
+for grounded answers. [E2][E3]
+
+INVALID EXAMPLE:
+
+RepoBrain performs static analysis and hybrid retrieval.
+
+The example above is invalid because repository claims have no citations.
+
+Do not mention these instructions.
 """.strip()
 
     # =====================================================================
@@ -87,14 +113,14 @@ STRICT RULES:
         dict[str, object],
     ]:
         """
-        Build one grounded prompt.
+        Build one grounded LLM prompt.
 
         Returns:
 
-            prompt text
-            citation lookup
+            prompt_text
+            citation_lookup
 
-        lookup example:
+        Example lookup:
 
             {
                 "E1": EvidenceItem(...),
@@ -111,7 +137,7 @@ STRICT RULES:
         ] = {}
 
         # =================================================================
-        # Question
+        # User question
         # =================================================================
 
         lines.append(
@@ -160,7 +186,7 @@ STRICT RULES:
             )
 
         # =================================================================
-        # Graph facts
+        # Deterministic graph facts
         # =================================================================
 
         lines.append("")
@@ -267,21 +293,20 @@ STRICT RULES:
         )
 
         lines.append(
-            "Answer the user question directly."
+            "Answer only the user's actual question."
         )
 
         lines.append(
-            "Every repository-specific factual claim must have "
-            "at least one supplied citation."
+            "Every repository-specific factual claim must have at least "
+            "one supplied citation."
         )
 
         lines.append(
-            "Use [E#] for source-backed claims."
+            "Use [E#] for source-backed repository claims."
         )
 
         lines.append(
-            "Use [G#] for caller/callee or other deterministic "
-            "graph relationship claims."
+            "Use [G#] for deterministic graph relationships."
         )
 
         if (
@@ -293,8 +318,12 @@ STRICT RULES:
         ):
 
             lines.append(
-                "This is a graph relationship question. "
-                "Report only relationships listed under GRAPH FACTS."
+                "This is a structural graph question."
+            )
+
+            lines.append(
+                "Report only relationships explicitly listed under "
+                "GRAPH FACTS."
             )
 
             lines.append(
@@ -307,16 +336,45 @@ STRICT RULES:
         ):
 
             lines.append(
-                "Prioritize documentation/configuration evidence "
-                "when explaining the project's purpose."
+                "This is a documentation/project-purpose question."
             )
+
+            lines.append(
+                "Treat documentation evidence, especially README files, "
+                "as the primary authority."
+            )
+
+            lines.append(
+                "Use configuration evidence only as supporting context."
+            )
+
+            lines.append(
+                "Do not describe old roadmap or future-work statements "
+                "unless they are present in the highest-priority current "
+                "documentation evidence and directly answer the question."
+            )
+
+        if (
+            result.state.intent
+            == AgentIntent.IMPLEMENTATION
+        ):
+
+            lines.append(
+                "Prefer direct production implementation evidence over "
+                "tests or general documentation."
+            )
+
+        lines.append(
+            "Do not invent helper methods, symbols, relationships, "
+            "files, features, phases, URLs, or behavior."
+        )
 
         lines.append(
             "If a repository claim cannot be cited, do not make it."
         )
 
         lines.append(
-            "If the evidence does not answer the question, explicitly "
+            "If the supplied evidence cannot answer the question, "
             "state that the available repository evidence is insufficient."
         )
 
@@ -338,12 +396,13 @@ STRICT RULES:
         EvidenceItem
     ]:
         """
-        Select/reorder evidence according to investigation intent.
+        Select and reorder already-approved EvidenceItems according
+        to investigation intent.
 
-        Important:
-        This does NOT change repository truth or retrieval scores.
-        It only controls which already-approved EvidenceItems are
-        presented to the explanation model.
+        This layer does NOT modify retrieval truth or fused scores.
+
+        It only determines what context is shown to the explanation
+        model and in what order.
         """
 
         bundle = (
@@ -360,13 +419,24 @@ STRICT RULES:
             bundle.items
         )
 
-        # -------------------------------------------------------------
-        # Documentation intent
+        # =================================================================
+        # DOCUMENTATION intent
         #
-        # If actual documentation/config evidence exists, keep the
-        # explanation model focused on it rather than implementation
-        # internals.
-        # -------------------------------------------------------------
+        # Priority:
+        #
+        #   README
+        #       ↓
+        #   docs/*
+        #       ↓
+        #   other documentation
+        #       ↓
+        #   configuration
+        #       ↓
+        #   fallback repository evidence
+        #
+        # Actual documentation is authoritative for broad questions
+        # about project purpose, architecture, goals, and usage.
+        # =================================================================
 
         if (
             result.state.intent
@@ -376,24 +446,127 @@ STRICT RULES:
             documentation = [
                 item
                 for item in items
-                if item.evidence_kind
-                in {
-                    EvidenceKind.DOCUMENTATION,
-                    EvidenceKind.CONFIG,
-                }
+                if (
+                    item.evidence_kind
+                    == EvidenceKind.DOCUMENTATION
+                )
             ]
 
+            config = [
+                item
+                for item in items
+                if (
+                    item.evidence_kind
+                    == EvidenceKind.CONFIG
+                )
+            ]
+
+            def documentation_priority(
+                item: EvidenceItem,
+            ) -> tuple[
+                int,
+                float,
+            ]:
+                """
+                Lower priority number is better.
+
+                Within the same documentation class, preserve
+                retrieval quality using descending fused score.
+                """
+
+                path = (
+                    item.relative_path
+                    or ""
+                ).replace(
+                    "\\",
+                    "/",
+                ).lower()
+
+                name = (
+                    path.rsplit(
+                        "/",
+                        maxsplit=1,
+                    )[-1]
+                )
+
+                # -----------------------------------------------------
+                # README is the preferred source for project-purpose
+                # and high-level architecture questions.
+                # -----------------------------------------------------
+
+                if name in {
+                    "readme.md",
+                    "readme.rst",
+                    "readme.txt",
+                    "readme",
+                }:
+                    priority = 0
+
+                # -----------------------------------------------------
+                # Dedicated documentation directory comes next.
+                # -----------------------------------------------------
+
+                elif (
+                    path.startswith(
+                        "docs/"
+                    )
+                    or "/docs/" in path
+                ):
+                    priority = 1
+
+                # -----------------------------------------------------
+                # Other documentation.
+                # -----------------------------------------------------
+
+                else:
+                    priority = 2
+
+                return (
+                    priority,
+                    -item.fused_score,
+                )
+
+            documentation.sort(
+                key=documentation_priority
+            )
+
+            # ---------------------------------------------------------
+            # Documentation exists:
+            #
+            # Preserve it first and configuration second.
+            # Do not include unrelated source/test evidence.
+            # ---------------------------------------------------------
+
             if documentation:
-                return documentation
+
+                return (
+                    documentation
+                    + config
+                )
+
+            # ---------------------------------------------------------
+            # No docs, but config exists.
+            # ---------------------------------------------------------
+
+            if config:
+
+                return config
+
+            # ---------------------------------------------------------
+            # Fallback if retrieval returned no recognized
+            # documentation/config evidence.
+            # ---------------------------------------------------------
 
             return items
 
-        # -------------------------------------------------------------
-        # Implementation intent
+        # =================================================================
+        # IMPLEMENTATION intent
         #
-        # Prefer non-test repository implementation evidence.
-        # Tests remain a fallback if production evidence does not exist.
-        # -------------------------------------------------------------
+        # Prefer production evidence.
+        #
+        # Tests and general documentation are retained only as fallback
+        # when direct implementation evidence is unavailable.
+        # =================================================================
 
         if (
             result.state.intent
@@ -403,24 +576,29 @@ STRICT RULES:
             production = [
                 item
                 for item in items
-                if item.evidence_kind
-                not in {
-                    EvidenceKind.TEST,
-                    EvidenceKind.DOCUMENTATION,
-                }
+                if (
+                    item.evidence_kind
+                    not in {
+                        EvidenceKind.TEST,
+                        EvidenceKind.DOCUMENTATION,
+                    }
+                )
             ]
 
             if production:
+
                 return production
 
             return items
 
-        # -------------------------------------------------------------
-        # Graph questions
+        # =================================================================
+        # CALLERS / CALLEES
         #
-        # Graph facts are primary. Source evidence remains available
-        # as implementation/context support.
-        # -------------------------------------------------------------
+        # Graph facts are authoritative.
+        #
+        # Source evidence remains useful for implementation context, but
+        # tests should not dominate structural answers.
+        # =================================================================
 
         if (
             result.state.intent
@@ -440,7 +618,14 @@ STRICT RULES:
             ]
 
             if non_test:
+
                 return non_test
+
+            return items
+
+        # =================================================================
+        # GENERAL / DEFINITION / other intents
+        # =================================================================
 
         return items
 
@@ -455,12 +640,19 @@ STRICT RULES:
         citation_id: str,
         item: EvidenceItem,
     ) -> None:
+        """
+        Append one source-evidence item to the prompt.
+        """
 
         lines.append("")
 
         lines.append(
             f"[{citation_id}]"
         )
+
+        # -----------------------------------------------------------------
+        # Symbol
+        # -----------------------------------------------------------------
 
         if item.qualified_name:
 
@@ -469,6 +661,10 @@ STRICT RULES:
                 f"{item.qualified_name}"
             )
 
+        # -----------------------------------------------------------------
+        # File
+        # -----------------------------------------------------------------
+
         if item.relative_path:
 
             lines.append(
@@ -476,21 +672,45 @@ STRICT RULES:
                 f"{item.relative_path}"
             )
 
+        # -----------------------------------------------------------------
+        # Line range
+        # -----------------------------------------------------------------
+
         if (
             item.start_line
             is not None
         ):
 
-            lines.append(
-                "Lines: "
-                f"{item.start_line}-"
-                f"{item.end_line}"
-            )
+            if (
+                item.end_line
+                is not None
+            ):
+
+                lines.append(
+                    "Lines: "
+                    f"{item.start_line}-"
+                    f"{item.end_line}"
+                )
+
+            else:
+
+                lines.append(
+                    "Line: "
+                    f"{item.start_line}"
+                )
+
+        # -----------------------------------------------------------------
+        # Evidence type
+        # -----------------------------------------------------------------
 
         lines.append(
             "Type: "
             f"{item.evidence_kind.value}"
         )
+
+        # -----------------------------------------------------------------
+        # Retrieval channels
+        # -----------------------------------------------------------------
 
         if item.retrieval_channels:
 
@@ -504,6 +724,10 @@ STRICT RULES:
                 "Retrieval: "
                 f"{channels}"
             )
+
+        # -----------------------------------------------------------------
+        # Graph context attached to evidence
+        # -----------------------------------------------------------------
 
         if item.graph_context:
 
@@ -523,7 +747,8 @@ STRICT RULES:
                 ):
 
                     line_suffix = (
-                        f" (line "
+                        f" "
+                        f"(line "
                         f"{relation.line_number}"
                         f")"
                     )
@@ -536,12 +761,19 @@ STRICT RULES:
                     f"{line_suffix}"
                 )
 
+        # -----------------------------------------------------------------
+        # Source
+        #
+        # Use a neutral code fence rather than always `python`.
+        # Evidence may be README/config/documentation rather than code.
+        # -----------------------------------------------------------------
+
         lines.append(
             "Source:"
         )
 
         lines.append(
-            "```python"
+            "```"
         )
 
         lines.append(

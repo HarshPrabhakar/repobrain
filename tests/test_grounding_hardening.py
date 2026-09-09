@@ -477,3 +477,86 @@ def test_mixed_source_and_graph_citations_are_supported() -> None:
     }
 
     assert answer.grounded is True
+
+def test_documentation_intent_puts_readme_before_config() -> None:
+
+    config = make_source_item(
+        evidence_id="config",
+        path="pyproject.toml",
+        symbol="pyproject.toml",
+        kind=EvidenceKind.CONFIG,
+    )
+
+    readme = make_source_item(
+        evidence_id="readme",
+        path="README.md",
+        symbol="README.md",
+        kind=EvidenceKind.DOCUMENTATION,
+    )
+
+    result = make_result(
+        intent=AgentIntent.DOCUMENTATION,
+        items=[
+            config,
+            readme,
+        ],
+    )
+
+    _, lookup = (
+        GroundedPromptBuilder()
+        .build(
+            result
+        )
+    )
+
+    assert (
+        lookup["E1"]
+        .relative_path
+        .lower()
+        == "readme.md"
+    )
+
+    assert (
+        lookup["E2"]
+        .relative_path
+        .lower()
+        == "pyproject.toml"
+    )
+
+def test_documentation_intent_prefers_readme_over_other_docs() -> None:
+
+    docs = make_source_item(
+        evidence_id="docs",
+        path="docs/architecture.md",
+        symbol="docs/architecture.md",
+        kind=EvidenceKind.DOCUMENTATION,
+    )
+
+    readme = make_source_item(
+        evidence_id="readme",
+        path="README.md",
+        symbol="README.md",
+        kind=EvidenceKind.DOCUMENTATION,
+    )
+
+    result = make_result(
+        intent=AgentIntent.DOCUMENTATION,
+        items=[
+            docs,
+            readme,
+        ],
+    )
+
+    _, lookup = (
+        GroundedPromptBuilder()
+        .build(
+            result
+        )
+    )
+
+    assert (
+        lookup["E1"]
+        .relative_path
+        .lower()
+        == "readme.md"
+    )
