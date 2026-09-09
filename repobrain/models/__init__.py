@@ -17,11 +17,21 @@ from repobrain.models.symbols import (
     SymbolType,
 )
 
+from repobrain.models.retrieval import (
+    ChunkType,
+    CodeChunk,
+    LexicalSearchResult,
+)
+
 __all__ = [
     "FileMetadata",
     "RepositoryMetadata",
     "RepositoryScanResult",
     "ScanError",
+
+    "ChunkType",
+    "CodeChunk",
+    "LexicalSearchResult",
 
     "CodeRelationship",
     "CodeSymbol",
