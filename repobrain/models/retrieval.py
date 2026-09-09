@@ -84,3 +84,32 @@ class LexicalSearchResult(BaseModel):
     )
 
     excerpt: str
+
+
+class SemanticSearchResult(BaseModel):
+    """
+    One Phase 3C semantic-search result.
+
+    Score is cosine-style vector similarity when normalized
+    embeddings are used with FAISS inner-product search.
+    """
+
+    chunk_id: str
+
+    file_id: str
+    relative_path: str
+
+    symbol_id: str | None = None
+
+    qualified_name: str | None = None
+
+    chunk_type: ChunkType
+
+    language: str
+
+    start_line: int
+    end_line: int
+
+    score: float
+
+    excerpt: str

@@ -23,6 +23,13 @@ from repobrain.models.retrieval import (
     LexicalSearchResult,
 )
 
+from repobrain.models.retrieval import (
+    ChunkType,
+    CodeChunk,
+    LexicalSearchResult,
+    SemanticSearchResult,
+)
+
 __all__ = [
     "FileMetadata",
     "RepositoryMetadata",
@@ -42,4 +49,5 @@ __all__ = [
     "ResolutionType",
     "SymbolType",
     "SymbolSearchResult",
+    "SemanticSearchResult",
 ]
