@@ -56,6 +56,8 @@ dependencies = [
     # Vector search
     "faiss-cpu>=1.15,<2.0",
 
+    "openai>=3.10,<4.0",
+
     # Embedding stack
     #
     # Sentence Transformers 6.x requires Transformers 5.x.
