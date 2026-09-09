@@ -30,6 +30,14 @@ from repobrain.models.retrieval import (
     SemanticSearchResult,
 )
 
+from repobrain.models.graph import (
+    GraphEdge,
+    GraphNeighbor,
+    GraphNode,
+    GraphStats,
+    GraphTraversalStep,
+)
+
 __all__ = [
     "FileMetadata",
     "RepositoryMetadata",
@@ -50,4 +58,10 @@ __all__ = [
     "SymbolType",
     "SymbolSearchResult",
     "SemanticSearchResult",
+
+    "GraphEdge",
+    "GraphNeighbor",
+    "GraphNode",
+    "GraphStats",
+    "GraphTraversalStep",
 ]
