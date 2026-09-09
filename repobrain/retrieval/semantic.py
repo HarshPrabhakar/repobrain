@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-import numpy as np
+from collections.abc import Iterable
+
 import faiss
+import numpy as np
 
 from repobrain.embeddings.base import (
     EmbeddingProvider,
@@ -12,33 +14,52 @@ from repobrain.models.retrieval import (
     SemanticSearchResult,
 )
 
+from repobrain.models.symbols import (
+    CodeRelationship,
+    CodeSymbol,
+)
+
+from repobrain.retrieval.semantic_document import (
+    SemanticCodeDocumentBuilder,
+)
+
 
 class SemanticSearchEngine:
     """
-    Phase 3C semantic repository search.
+    RepoBrain semantic repository search.
+
+    Phase 3C:
+        vector similarity using FAISS
+
+    Phase 3C.2:
+        deterministic AST-aware semantic document construction
 
     Architecture:
 
         CodeChunk
+            +
+        CodeSymbol
+            +
+        CodeRelationship
+            ↓
+        SemanticCodeDocumentBuilder
             ↓
         EmbeddingProvider
             ↓
         normalized vectors
             ↓
         FAISS IndexFlatIP
-            ↓
-        semantic nearest-neighbor search
-
-    The index is currently in-memory.
-
-    Persistence will be added when RepoBrain's storage layer
-    is introduced.
     """
 
     def __init__(
         self,
         chunks: list[CodeChunk],
         embedding_provider: EmbeddingProvider,
+        *,
+        symbols: Iterable[CodeSymbol] | None = None,
+        relationships: Iterable[
+            CodeRelationship
+        ] | None = None,
     ) -> None:
 
         self.chunks = list(
@@ -53,8 +74,29 @@ class SemanticSearchEngine:
             embedding_provider.dimension
         )
 
-        self._index = faiss.IndexFlatIP(
-            self._dimension
+        self._semantic_document_builder: (
+            SemanticCodeDocumentBuilder
+            | None
+        ) = None
+
+        if symbols is not None:
+
+            self._semantic_document_builder = (
+                SemanticCodeDocumentBuilder(
+                    symbols=symbols,
+                    relationships=(
+                        relationships
+                        if relationships
+                        is not None
+                        else []
+                    ),
+                )
+            )
+
+        self._index = (
+            faiss.IndexFlatIP(
+                self._dimension
+            )
         )
 
         self._build()
@@ -71,8 +113,11 @@ class SemanticSearchEngine:
             return
 
         texts = [
-            self._searchable_text(chunk)
-            for chunk in self.chunks
+            self._embedding_text(
+                chunk
+            )
+            for chunk
+            in self.chunks
         ]
 
         embeddings = (
@@ -82,11 +127,13 @@ class SemanticSearchEngine:
             )
         )
 
-        embeddings = self._validate_embeddings(
-            embeddings,
-            expected_rows=len(
-                self.chunks
-            ),
+        embeddings = (
+            self._validate_embeddings(
+                embeddings,
+                expected_rows=len(
+                    self.chunks
+                ),
+            )
         )
 
         self._index.add(
@@ -105,13 +152,6 @@ class SemanticSearchEngine:
         language: str | None = None,
         min_score: float | None = None,
     ) -> list[SemanticSearchResult]:
-        """
-        Perform semantic nearest-neighbor search.
-
-        When a language filter is provided, all indexed
-        candidates are retrieved before filtering. This keeps
-        filtering correct for our current small repository scale.
-        """
 
         normalized_query = (
             query.strip()
@@ -148,9 +188,9 @@ class SemanticSearchEngine:
 
         else:
 
-            # Search all candidates first so post-search
-            # filtering cannot accidentally hide valid
-            # language-specific results.
+            # Search every candidate before applying language
+            # filtering so valid filtered results cannot be
+            # accidentally excluded.
             search_k = len(
                 self.chunks
             )
@@ -193,7 +233,8 @@ class SemanticSearchEngine:
 
             if (
                 language is not None
-                and chunk.language != language
+                and chunk.language
+                != language
             ):
                 continue
 
@@ -201,8 +242,7 @@ class SemanticSearchEngine:
                 score
             )
 
-            # Floating-point operations can produce tiny
-            # numerical overshoots such as 1.0000001.
+            # Protect against very small numerical overshoots.
             numeric_score = max(
                 -1.0,
                 min(
@@ -220,9 +260,13 @@ class SemanticSearchEngine:
 
             results.append(
                 SemanticSearchResult(
-                    chunk_id=chunk.chunk_id,
+                    chunk_id=(
+                        chunk.chunk_id
+                    ),
 
-                    file_id=chunk.file_id,
+                    file_id=(
+                        chunk.file_id
+                    ),
 
                     relative_path=(
                         chunk.relative_path
@@ -252,7 +296,9 @@ class SemanticSearchEngine:
                         chunk.end_line
                     ),
 
-                    score=numeric_score,
+                    score=(
+                        numeric_score
+                    ),
 
                     excerpt=self._excerpt(
                         chunk.text
@@ -260,10 +306,60 @@ class SemanticSearchEngine:
                 )
             )
 
-            if len(results) >= top_k:
+            if (
+                len(results)
+                >= top_k
+            ):
                 break
 
         return results
+
+    # =========================================================
+    # Semantic representation
+    # =========================================================
+
+    def _embedding_text(
+        self,
+        chunk: CodeChunk,
+    ) -> str:
+        """
+        Return text that will actually be embedded.
+
+        When Phase 3C.2 repository intelligence is supplied,
+        build an AST-aware deterministic semantic document.
+
+        Otherwise preserve the Phase 3C raw-code behavior.
+        """
+
+        if (
+            self._semantic_document_builder
+            is not None
+        ):
+
+            return (
+                self._semantic_document_builder
+                .build(
+                    chunk
+                )
+            )
+
+        return self._searchable_text(
+            chunk
+        )
+
+    @staticmethod
+    def _searchable_text(
+        chunk: CodeChunk,
+    ) -> str:
+        """
+        Phase 3C fallback representation.
+
+        Keep this method because existing tests and callers
+        rely on raw-code semantic search when no repository
+        symbol intelligence is supplied.
+        """
+
+        return chunk.text
 
     # =========================================================
     # Embedding validation
@@ -346,35 +442,7 @@ class SemanticSearchEngine:
         )
 
     # =========================================================
-    # Search text
-    # =========================================================
-
-    @staticmethod
-    def _searchable_text(
-        chunk: CodeChunk,
-    ) -> str:
-        """
-        Return the semantic document representation.
-
-        Phase 3C.1 intentionally embeds the raw chunk text.
-
-        Code-specialized retrieval models such as CodeRankEmbed
-        are trained to compare an instructed natural-language
-        query against source code directly.
-
-        Structural metadata such as file path, language, chunk
-        type, and qualified symbol name remains available on the
-        CodeChunk and SemanticSearchResult, but is not injected
-        into the embedding text.
-
-        This keeps retrieval representation separate from
-        evidence/display metadata.
-        """
-
-        return chunk.text
-
-    # =========================================================
-    # Excerpt
+    # Excerpts
     # =========================================================
 
     @staticmethod
@@ -388,7 +456,10 @@ class SemanticSearchEngine:
             text.split()
         )
 
-        if len(collapsed) <= max_length:
+        if (
+            len(collapsed)
+            <= max_length
+        ):
 
             return collapsed
 

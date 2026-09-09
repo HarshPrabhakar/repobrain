@@ -15,10 +15,15 @@ from repobrain.retrieval.symbols import (
     SymbolSearchEngine,
 )
 
+from repobrain.retrieval.semantic_document import (
+    SemanticCodeDocumentBuilder,
+)
+
 __all__ = [
     "BM25Index",
     "BM25Tokenizer",
     "RepositoryChunkBuilder",
     "SemanticSearchEngine",
     "SymbolSearchEngine",
+    "SemanticCodeDocumentBuilder",
 ]

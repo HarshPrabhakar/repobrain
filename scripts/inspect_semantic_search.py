@@ -145,15 +145,13 @@ def main() -> int:
         "[3/6] Resolving repository symbols..."
     )
 
-    resolver = (
-        PythonSymbolResolver()
-    )
+    resolver = PythonSymbolResolver()
 
-    resolved, _ = (
+    resolved_analysis, resolution_summary = (
         resolver.resolve_repository(
             analysis
         )
-    )
+)
 
     # ---------------------------------------------------------
     # Phase 3B chunk infrastructure
@@ -163,13 +161,11 @@ def main() -> int:
         "[4/6] Building repository chunks..."
     )
 
-    builder = (
-        RepositoryChunkBuilder()
-    )
+    chunk_builder = RepositoryChunkBuilder()
 
-    chunks = builder.build(
+    chunks = chunk_builder.build(
         scan_result=scan_result,
-        analysis=resolved,
+        analysis=resolved_analysis,
     )
 
     # ---------------------------------------------------------
@@ -224,12 +220,14 @@ def main() -> int:
         "[6/6] Creating FAISS semantic index..."
     )
 
-    engine = SemanticSearchEngine(
+    semantic_engine = SemanticSearchEngine(
         chunks=chunks,
         embedding_provider=provider,
+        symbols=resolved_analysis.symbols,
+        relationships=resolved_analysis.relationships,
     )
 
-    results = engine.search(
+    results = semantic_engine.search(
         args.query,
         top_k=args.top_k,
         language=args.language,
@@ -256,7 +254,7 @@ def main() -> int:
 
     print(
         f"Vector dim  : "
-        f"{engine.dimension}"
+        f"{semantic_engine.dimension}"
     )
 
     print(
