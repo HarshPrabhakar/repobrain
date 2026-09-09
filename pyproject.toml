@@ -16,7 +16,6 @@ readme = "README.md"
 
 requires-python = ">=3.11"
 
-
 authors = [
     { name = "Harsh Prabhakar" },
 ]
@@ -48,36 +47,29 @@ classifiers = [
 
 
 dependencies = [
-    # ---------------------------------------------------------
-    # Core data models / validation
-    # ---------------------------------------------------------
+    # Core models / validation
     "pydantic>=2.8,<3.0",
 
-    # ---------------------------------------------------------
     # Numerical computing
-    # ---------------------------------------------------------
     "numpy>=2.0,<3.0",
 
-    # ---------------------------------------------------------
     # Vector search
-    # ---------------------------------------------------------
     "faiss-cpu>=1.15,<2.0",
 
-    # ---------------------------------------------------------
     # Embedding stack
-    # ---------------------------------------------------------
-    "sentence-transformers>=6.0,<7.0",
+    #
+    # Sentence Transformers 6.x requires Transformers 5.x.
+    # RepoBrain currently uses Transformers 4.57.6 because
+    # this stack has already been validated with CodeRankEmbed.
+    "sentence-transformers==5.1.2",
     "transformers==4.57.6",
-    "tokenizers<0.23",
+    "tokenizers>=0.22,<0.23",
     "einops>=0.8,<1.0",
 
-    # ---------------------------------------------------------
     # PyTorch
     #
     # Do not pin a CUDA-specific build here.
-    # Users should install the correct PyTorch build for
-    # their system.
-    # ---------------------------------------------------------
+    # Install the correct PyTorch build for the target machine.
     "torch>=2.4,<3.0",
 ]
 
@@ -91,12 +83,6 @@ dev = [
 test = [
     "pytest>=8.0,<10.0",
 ]
-
-
-[project.urls]
-Homepage = "https://github.com/HarshPrabhakar/repobrain"
-Repository = "https://github.com/HarshPrabhakar/repobrain"
-Issues = "https://github.com/HarshPrabhakar/repobrain/issues"
 
 
 [tool.setuptools.packages.find]
@@ -122,13 +108,10 @@ addopts = [
     "-ra",
 ]
 
-filterwarnings = [
-    "ignore::DeprecationWarning",
-]
-
 
 [tool.coverage.run]
 branch = true
+
 source = [
     "repobrain",
 ]
