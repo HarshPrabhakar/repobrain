@@ -1,32 +1,145 @@
+[build-system]
+requires = [
+    "setuptools>=75.0",
+    "wheel",
+]
+build-backend = "setuptools.build_meta"
+
+
 [project]
 name = "repobrain"
 version = "0.1.0"
-description = "Agentic repository intelligence system"
+
+description = "Agentic AI Repository Intelligence System"
+
+readme = "README.md"
+
 requires-python = ">=3.11"
 
-dependencies = [
-    "pydantic>=2.8,<3.0",
+
+authors = [
+    { name = "Harsh Prabhakar" },
 ]
 
-[project.optional-dependencies]
-dev = [
-    "pytest>=8.0",
+keywords = [
+    "ai",
+    "agentic-ai",
+    "code-search",
+    "repository-intelligence",
+    "semantic-search",
+    "static-analysis",
+    "ast",
+    "faiss",
+    "embeddings",
 ]
 
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-pythonpath = ["."]
-addopts = "-q"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+]
 
-[build-system]
-requires = ["setuptools>=69"]
-build-backend = "setuptools.build_meta"
 
 dependencies = [
+    # ---------------------------------------------------------
+    # Core data models / validation
+    # ---------------------------------------------------------
     "pydantic>=2.8,<3.0",
+
+    # ---------------------------------------------------------
+    # Numerical computing
+    # ---------------------------------------------------------
     "numpy>=2.0,<3.0",
+
+    # ---------------------------------------------------------
+    # Vector search
+    # ---------------------------------------------------------
     "faiss-cpu>=1.15,<2.0",
+
+    # ---------------------------------------------------------
+    # Embedding stack
+    # ---------------------------------------------------------
     "sentence-transformers>=6.0,<7.0",
     "transformers==4.57.6",
+    "tokenizers<0.23",
     "einops>=0.8,<1.0",
+
+    # ---------------------------------------------------------
+    # PyTorch
+    #
+    # Do not pin a CUDA-specific build here.
+    # Users should install the correct PyTorch build for
+    # their system.
+    # ---------------------------------------------------------
+    "torch>=2.4,<3.0",
+]
+
+
+[project.optional-dependencies]
+
+dev = [
+    "pytest>=8.0,<10.0",
+]
+
+test = [
+    "pytest>=8.0,<10.0",
+]
+
+
+[project.urls]
+Homepage = "https://github.com/HarshPrabhakar/repobrain"
+Repository = "https://github.com/HarshPrabhakar/repobrain"
+Issues = "https://github.com/HarshPrabhakar/repobrain/issues"
+
+
+[tool.setuptools.packages.find]
+include = [
+    "repobrain*",
+]
+
+
+[tool.pytest.ini_options]
+testpaths = [
+    "tests",
+]
+
+python_files = [
+    "test_*.py",
+]
+
+python_functions = [
+    "test_*",
+]
+
+addopts = [
+    "-ra",
+]
+
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]
+
+
+[tool.coverage.run]
+branch = true
+source = [
+    "repobrain",
+]
+
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
 ]
