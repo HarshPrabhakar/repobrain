@@ -354,41 +354,24 @@ class SemanticSearchEngine:
         chunk: CodeChunk,
     ) -> str:
         """
-        Include structural metadata in the document embedding.
+        Return the semantic document representation.
 
-        This helps semantic retrieval understand both the code
-        body and where that code belongs.
+        Phase 3C.1 intentionally embeds the raw chunk text.
+
+        Code-specialized retrieval models such as CodeRankEmbed
+        are trained to compare an instructed natural-language
+        query against source code directly.
+
+        Structural metadata such as file path, language, chunk
+        type, and qualified symbol name remains available on the
+        CodeChunk and SemanticSearchResult, but is not injected
+        into the embedding text.
+
+        This keeps retrieval representation separate from
+        evidence/display metadata.
         """
 
-        parts = [
-            f"File: {chunk.relative_path}",
-            f"Language: {chunk.language}",
-            (
-                "Chunk type: "
-                f"{chunk.chunk_type.value}"
-            ),
-        ]
-
-        if chunk.qualified_name:
-
-            parts.append(
-                (
-                    "Symbol: "
-                    f"{chunk.qualified_name}"
-                )
-            )
-
-        parts.append(
-            "Source:"
-        )
-
-        parts.append(
-            chunk.text
-        )
-
-        return "\n".join(
-            parts
-        )
+        return chunk.text
 
     # =========================================================
     # Excerpt

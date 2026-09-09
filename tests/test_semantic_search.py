@@ -521,3 +521,24 @@ def test_min_score_filter() -> None:
         result.score >= 0.99
         for result in results
     )
+
+def test_searchable_text_uses_raw_chunk_text() -> None:
+
+    chunk = make_chunk(
+        "raw_code",
+        "def calculate_hash(path):\n    return sha256(path)",
+        path="app/hash.py",
+        qualified_name="app.hash.calculate_hash",
+    )
+
+    text = (
+        SemanticSearchEngine
+        ._searchable_text(chunk)
+    )
+
+    assert text == chunk.text
+
+    assert "File:" not in text
+    assert "Language:" not in text
+    assert "Chunk type:" not in text
+    assert "Symbol:" not in text
