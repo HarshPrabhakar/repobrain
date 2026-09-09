@@ -11,55 +11,279 @@ from repobrain.llm.base import (
 )
 
 from repobrain.models.agent import (
+    AgentGraphFact,
+    AgentIntent,
     AgentRunResult,
 )
 
 from repobrain.models.answer import (
     AnswerCitation,
+    AnswerCitationKind,
     GroundedAnswer,
+)
+
+from repobrain.models.evidence import (
+    EvidenceItem,
 )
 
 
 _CITATION_PATTERN = re.compile(
-    r"\[E(\d+)\]"
+    r"\[(E|G)(\d+)\]"
 )
 
 
 class GroundedAnswerGenerator:
     """
-    Generate natural-language answers using only assembled
-    repository evidence.
+    Generate repository answers while preserving RepoBrain's
+    deterministic grounding boundary.
+
+    Structural graph questions:
+        CALLERS
+        CALLEES
+
+    are rendered directly from deterministic graph facts.
+
+    Other intents use the configured LLM provider.
+
+    If an LLM answer contains repository context but no valid
+    citations, RepoBrain performs exactly ONE citation-repair retry.
     """
 
     def __init__(
         self,
         *,
         provider: LLMProvider,
-        prompt_builder: (
-            GroundedPromptBuilder
-            | None
-        ) = None,
+        prompt_builder: GroundedPromptBuilder | None = None,
     ) -> None:
 
-        self.provider = (
-            provider
-        )
+        self.provider = provider
 
         self.prompt_builder = (
             prompt_builder
             or GroundedPromptBuilder()
         )
 
+    # =====================================================================
+    # Public API
+    # =====================================================================
+
     def generate(
         self,
         result: AgentRunResult,
     ) -> GroundedAnswer:
 
-        prompt, citation_lookup = (
+        # -------------------------------------------------------------
+        # Deterministic graph questions
+        # -------------------------------------------------------------
+
+        if (
+            result.state.intent
+            in {
+                AgentIntent.CALLERS,
+                AgentIntent.CALLEES,
+            }
+            and result.graph_facts
+        ):
+            return (
+                self._generate_graph_answer(
+                    result
+                )
+            )
+
+        # -------------------------------------------------------------
+        # Normal LLM-backed answer
+        # -------------------------------------------------------------
+
+        return (
+            self._generate_llm_answer(
+                result
+            )
+        )
+
+    # =====================================================================
+    # Deterministic graph answer
+    # =====================================================================
+
+    def _generate_graph_answer(
+        self,
+        result: AgentRunResult,
+    ) -> GroundedAnswer:
+
+        facts = list(
+            result.graph_facts
+        )
+
+        citations: list[
+            AnswerCitation
+        ] = []
+
+        answer_lines: list[str] = []
+
+        # -------------------------------------------------------------
+        # CALLERS
+        # -------------------------------------------------------------
+
+        if (
+            result.state.intent
+            == AgentIntent.CALLERS
+        ):
+
+            target_name = (
+                result.resolved_qualified_name
+            )
+
+            if (
+                target_name is None
+                and facts
+            ):
+                target_name = (
+                    facts[0]
+                    .target_qualified_name
+                )
+
+            if len(facts) == 1:
+
+                fact = facts[0]
+
+                answer_lines.append(
+                    f"`{fact.target_qualified_name}` "
+                    f"is called by "
+                    f"`{fact.source_qualified_name}`. "
+                    f"[G1]"
+                )
+
+            else:
+
+                answer_lines.append(
+                    f"`{target_name}` is called by:"
+                )
+
+                for index, fact in enumerate(
+                    facts,
+                    start=1,
+                ):
+
+                    answer_lines.append(
+                        f"{index}. "
+                        f"`{fact.source_qualified_name}` "
+                        f"[G{index}]"
+                    )
+
+        # -------------------------------------------------------------
+        # CALLEES
+        # -------------------------------------------------------------
+
+        elif (
+            result.state.intent
+            == AgentIntent.CALLEES
+        ):
+
+            source_name = (
+                result.resolved_qualified_name
+            )
+
+            if (
+                source_name is None
+                and facts
+            ):
+                source_name = (
+                    facts[0]
+                    .source_qualified_name
+                )
+
+            answer_lines.append(
+                f"`{source_name}` directly calls:"
+            )
+
+            for index, fact in enumerate(
+                facts,
+                start=1,
+            ):
+
+                answer_lines.append(
+                    f"{index}. "
+                    f"`{fact.target_qualified_name}` "
+                    f"[G{index}]"
+                )
+
+        # -------------------------------------------------------------
+        # Graph citations
+        # -------------------------------------------------------------
+
+        for index, fact in enumerate(
+            facts,
+            start=1,
+        ):
+
+            citations.append(
+                self._graph_citation(
+                    citation_id=(
+                        f"G{index}"
+                    ),
+                    fact=fact,
+                )
+            )
+
+        evidence_count = (
+            len(
+                result.evidence.items
+            )
+            if (
+                result.evidence
+                is not None
+            )
+            else 0
+        )
+
+        return GroundedAnswer(
+            query=result.state.query,
+
+            answer_text="\n".join(
+                answer_lines
+            ),
+
+            model_name=(
+                "deterministic-graph"
+            ),
+
+            citations=citations,
+
+            invalid_citation_ids=[],
+
+            evidence_items_available=(
+                evidence_count
+            ),
+
+            graph_facts_available=(
+                len(facts)
+            ),
+
+            grounded=bool(
+                citations
+            ),
+        )
+
+    # =====================================================================
+    # LLM-backed answer
+    # =====================================================================
+
+    def _generate_llm_answer(
+        self,
+        result: AgentRunResult,
+    ) -> GroundedAnswer:
+
+        (
+            prompt,
+            citation_lookup,
+        ) = (
             self.prompt_builder.build(
                 result
             )
         )
+
+        # -------------------------------------------------------------
+        # First generation attempt
+        # -------------------------------------------------------------
 
         answer_text = (
             self.provider.generate(
@@ -71,85 +295,121 @@ class GroundedAnswerGenerator:
             )
         )
 
-        citation_ids = (
-            self._citation_ids(
-                answer_text
+        (
+            valid_citations,
+            invalid_citations,
+        ) = (
+            self._validate_citations(
+                answer_text=answer_text,
+                citation_lookup=(
+                    citation_lookup
+                ),
             )
         )
-
-        valid_citations: list[
-            AnswerCitation
-        ] = []
-
-        invalid_citations: list[
-            str
-        ] = []
-
-        for citation_id in citation_ids:
-
-            item = (
-                citation_lookup.get(
-                    citation_id
-                )
-            )
-
-            if item is None:
-
-                invalid_citations.append(
-                    citation_id
-                )
-
-                continue
-
-            valid_citations.append(
-                AnswerCitation(
-                    citation_id=(
-                        citation_id
-                    ),
-                    evidence_id=(
-                        item.evidence_id
-                    ),
-                    relative_path=(
-                        item.relative_path
-                    ),
-                    start_line=(
-                        item.start_line
-                    ),
-                    end_line=(
-                        item.end_line
-                    ),
-                    qualified_name=(
-                        item.qualified_name
-                    ),
-                )
-            )
 
         bundle = (
             result.evidence
         )
 
-        has_repository_context = bool(
-            (
-                bundle
-                and bundle.items
+        evidence_count = (
+            len(
+                bundle.items
             )
-            or result.graph_facts
+            if bundle
+            is not None
+            else 0
         )
+
+        graph_count = len(
+            result.graph_facts
+        )
+
+        has_repository_context = (
+            evidence_count > 0
+            or graph_count > 0
+        )
+
+        # -------------------------------------------------------------
+        # One-pass citation repair
+        #
+        # Retry only when:
+        #
+        # - repository context exists
+        # - no valid citations were produced
+        #
+        # This covers the common case where the model answered from
+        # evidence but simply forgot citation syntax.
+        # -------------------------------------------------------------
+
+        if (
+            has_repository_context
+            and not valid_citations
+        ):
+
+            repair_prompt = (
+                self._build_citation_repair_prompt(
+                    original_prompt=prompt,
+                    original_answer=answer_text,
+                )
+            )
+
+            repaired_answer_text = (
+                self.provider.generate(
+                    instructions=(
+                        self.prompt_builder
+                        .SYSTEM_INSTRUCTIONS
+                    ),
+                    input_text=(
+                        repair_prompt
+                    ),
+                )
+            )
+
+            (
+                repaired_valid_citations,
+                repaired_invalid_citations,
+            ) = (
+                self._validate_citations(
+                    answer_text=(
+                        repaired_answer_text
+                    ),
+                    citation_lookup=(
+                        citation_lookup
+                    ),
+                )
+            )
+
+            # ---------------------------------------------------------
+            # Accept the repair only if it improves grounding.
+            #
+            # If the retry still has no valid citations, we preserve
+            # the repaired text but Grounded will remain False.
+            # ---------------------------------------------------------
+
+            answer_text = (
+                repaired_answer_text
+            )
+
+            valid_citations = (
+                repaired_valid_citations
+            )
+
+            invalid_citations = (
+                repaired_invalid_citations
+            )
 
         grounded = (
             has_repository_context
-            and bool(valid_citations)
-            and not invalid_citations   
+            and bool(
+                valid_citations
+            )
+            and not invalid_citations
         )
 
         return GroundedAnswer(
-            query=(
-                result.state.query
-            ),
+            query=result.state.query,
 
-            answer_text=(
-                answer_text
-            ),
+            answer_text=answer_text,
 
             model_name=(
                 self.provider.model_name
@@ -164,33 +424,245 @@ class GroundedAnswerGenerator:
             ),
 
             evidence_items_available=(
-                len(
-                    bundle.items
-                )
-                if bundle
-                is not None
-                else 0
+                evidence_count
             ),
 
             graph_facts_available=(
-                len(
-                    result.graph_facts
-                )
+                graph_count
             ),
 
-            grounded=(
-                grounded
+            grounded=grounded,
+        )
+
+    # =====================================================================
+    # Citation repair prompt
+    # =====================================================================
+
+    @staticmethod
+    def _build_citation_repair_prompt(
+        *,
+        original_prompt: str,
+        original_answer: str,
+    ) -> str:
+        """
+        Build exactly one citation-repair request.
+
+        The model receives the same repository evidence again plus
+        its previous answer.
+
+        It is asked to rewrite, not extend, the answer.
+        """
+
+        return (
+            f"{original_prompt}\n\n"
+            "CITATION REPAIR\n"
+            "===============\n"
+            "Your previous answer did not contain any valid supplied "
+            "repository citations.\n\n"
+            "Rewrite the previous answer using ONLY the repository "
+            "evidence and graph facts above.\n\n"
+            "Requirements:\n"
+            "- Preserve only claims supported by the supplied context.\n"
+            "- Add [E#] after every source-backed repository claim.\n"
+            "- Add [G#] after every graph-relationship claim.\n"
+            "- Use ONLY citation IDs that appear above.\n"
+            "- Do not invent new citation IDs.\n"
+            "- Do not add new unsupported facts.\n"
+            "- If the evidence is insufficient, say so directly.\n"
+            "- Return only the rewritten answer.\n\n"
+            "PREVIOUS ANSWER\n"
+            "===============\n"
+            f"{original_answer}"
+        )
+
+    # =====================================================================
+    # Citation validation
+    # =====================================================================
+
+    def _validate_citations(
+        self,
+        *,
+        answer_text: str,
+        citation_lookup: dict[
+            str,
+            object,
+        ],
+    ) -> tuple[
+        list[AnswerCitation],
+        list[str],
+    ]:
+
+        citation_ids = (
+            self._citation_ids(
+                answer_text
+            )
+        )
+
+        valid: list[
+            AnswerCitation
+        ] = []
+
+        invalid: list[str] = []
+
+        for citation_id in (
+            citation_ids
+        ):
+
+            referenced_object = (
+                citation_lookup.get(
+                    citation_id
+                )
+            )
+
+            if (
+                referenced_object
+                is None
+            ):
+
+                invalid.append(
+                    citation_id
+                )
+
+                continue
+
+            # ---------------------------------------------------------
+            # Source evidence
+            # ---------------------------------------------------------
+
+            if isinstance(
+                referenced_object,
+                EvidenceItem,
+            ):
+
+                valid.append(
+                    AnswerCitation(
+                        citation_id=(
+                            citation_id
+                        ),
+
+                        citation_kind=(
+                            AnswerCitationKind.SOURCE
+                        ),
+
+                        evidence_id=(
+                            referenced_object
+                            .evidence_id
+                        ),
+
+                        relative_path=(
+                            referenced_object
+                            .relative_path
+                        ),
+
+                        start_line=(
+                            referenced_object
+                            .start_line
+                        ),
+
+                        end_line=(
+                            referenced_object
+                            .end_line
+                        ),
+
+                        qualified_name=(
+                            referenced_object
+                            .qualified_name
+                        ),
+                    )
+                )
+
+                continue
+
+            # ---------------------------------------------------------
+            # Graph evidence
+            # ---------------------------------------------------------
+
+            if isinstance(
+                referenced_object,
+                AgentGraphFact,
+            ):
+
+                valid.append(
+                    self._graph_citation(
+                        citation_id=(
+                            citation_id
+                        ),
+
+                        fact=(
+                            referenced_object
+                        ),
+                    )
+                )
+
+                continue
+
+            invalid.append(
+                citation_id
+            )
+
+        return (
+            valid,
+            invalid,
+        )
+
+    # =====================================================================
+    # Graph citation factory
+    # =====================================================================
+
+    @staticmethod
+    def _graph_citation(
+        *,
+        citation_id: str,
+        fact: AgentGraphFact,
+    ) -> AnswerCitation:
+
+        return AnswerCitation(
+            citation_id=(
+                citation_id
+            ),
+
+            citation_kind=(
+                AnswerCitationKind.GRAPH
+            ),
+
+            relationship_type=(
+                fact.relationship_type
+            ),
+
+            source_symbol_id=(
+                fact.source_symbol_id
+            ),
+
+            source_qualified_name=(
+                fact.source_qualified_name
+            ),
+
+            target_symbol_id=(
+                fact.target_symbol_id
+            ),
+
+            target_qualified_name=(
+                fact.target_qualified_name
             ),
         )
+
+    # =====================================================================
+    # Citation parser
+    # =====================================================================
 
     @staticmethod
     def _citation_ids(
         answer_text: str,
     ) -> list[str]:
+        """
+        Extract unique E#/G# citations while preserving first-use order.
+        """
 
         seen: set[str] = set()
 
-        result: list[str] = []
+        citation_ids: list[
+            str
+        ] = []
 
         for match in (
             _CITATION_PATTERN
@@ -200,18 +672,22 @@ class GroundedAnswerGenerator:
         ):
 
             citation_id = (
-                f"E{match.group(1)}"
+                f"{match.group(1)}"
+                f"{match.group(2)}"
             )
 
-            if citation_id in seen:
+            if (
+                citation_id
+                in seen
+            ):
                 continue
 
             seen.add(
                 citation_id
             )
 
-            result.append(
+            citation_ids.append(
                 citation_id
             )
 
-        return result
+        return citation_ids

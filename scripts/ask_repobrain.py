@@ -38,6 +38,10 @@ from repobrain.llm import (
     OllamaLLMProvider,
 )
 
+from repobrain.models.answer import (
+    AnswerCitationKind,
+)
+
 from repobrain.parsing import (
     PythonRepositoryAnalyzer,
 )
@@ -59,6 +63,13 @@ from repobrain.retrieval.lexical import (
 
 
 # ============================================================================
+# Constants
+# ============================================================================
+
+WIDTH = 110
+
+
+# ============================================================================
 # CLI
 # ============================================================================
 
@@ -66,21 +77,22 @@ from repobrain.retrieval.lexical import (
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Ask RepoBrain a repository question "
-            "using local Ollama + Qwen."
+            "Ask RepoBrain questions about a local repository "
+            "using deterministic repository evidence and a local "
+            "Ollama language model."
         )
     )
 
     parser.add_argument(
         "repository",
         type=Path,
-        help="Repository path",
+        help="Path to the repository to analyze.",
     )
 
     parser.add_argument(
         "query",
         type=str,
-        help="Question about the repository",
+        help="Question to ask about the repository.",
     )
 
     parser.add_argument(
@@ -88,8 +100,8 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default="qwen2.5-coder:14b",
         help=(
-            "Ollama model name "
-            "(default: qwen2.5-coder:14b)"
+            "Ollama model name. "
+            "Default: qwen2.5-coder:14b"
         ),
     )
 
@@ -98,79 +110,8 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default="http://localhost:11434",
         help=(
-            "Ollama server URL "
-            "(default: http://localhost:11434)"
-        ),
-    )
-
-    parser.add_argument(
-        "--max-steps",
-        type=int,
-        default=3,
-        help="Maximum agent investigation steps",
-    )
-
-    parser.add_argument(
-        "--retrieval-top-k",
-        type=int,
-        default=20,
-        help=(
-            "Hybrid results passed into "
-            "evidence assembly"
-        ),
-    )
-
-    parser.add_argument(
-        "--candidate-size",
-        type=int,
-        default=30,
-        help=(
-            "Candidate count fetched by each "
-            "base retrieval channel"
-        ),
-    )
-
-    parser.add_argument(
-        "--graph-seeds",
-        type=int,
-        default=8,
-        help=(
-            "Number of preliminary hybrid results "
-            "used as graph seeds"
-        ),
-    )
-
-    parser.add_argument(
-        "--graph-depth",
-        type=int,
-        default=1,
-        help="Hybrid graph expansion depth",
-    )
-
-    parser.add_argument(
-        "--max-evidence-items",
-        type=int,
-        default=8,
-        help="Maximum evidence items sent to the LLM",
-    )
-
-    parser.add_argument(
-        "--max-characters",
-        type=int,
-        default=24_000,
-        help=(
-            "Maximum evidence characters "
-            "sent to the LLM"
-        ),
-    )
-
-    parser.add_argument(
-        "--max-graph-relations",
-        type=int,
-        default=5,
-        help=(
-            "Maximum graph relationships "
-            "attached per evidence item"
+            "Ollama server URL. "
+            "Default: http://localhost:11434"
         ),
     )
 
@@ -179,8 +120,58 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=0.2,
         help=(
-            "LLM generation temperature "
-            "(default: 0.2)"
+            "Generation temperature. "
+            "Default: 0.2"
+        ),
+    )
+
+    parser.add_argument(
+        "--max-steps",
+        type=int,
+        default=3,
+        help=(
+            "Maximum number of deterministic "
+            "agent investigation steps."
+        ),
+    )
+
+    parser.add_argument(
+        "--retrieval-top-k",
+        type=int,
+        default=20,
+        help=(
+            "Number of hybrid retrieval results "
+            "available to the evidence layer."
+        ),
+    )
+
+    parser.add_argument(
+        "--max-evidence-items",
+        type=int,
+        default=8,
+        help=(
+            "Maximum number of evidence items "
+            "assembled for one query."
+        ),
+    )
+
+    parser.add_argument(
+        "--max-characters",
+        type=int,
+        default=24_000,
+        help=(
+            "Maximum source-evidence character "
+            "budget for one query."
+        ),
+    )
+
+    parser.add_argument(
+        "--max-graph-relations",
+        type=int,
+        default=5,
+        help=(
+            "Maximum graph-context relationships "
+            "attached to each evidence item."
         ),
     )
 
@@ -188,8 +179,7 @@ def parse_args() -> argparse.Namespace:
         "--show-evidence",
         action="store_true",
         help=(
-            "Print the evidence bundle after "
-            "the generated answer"
+            "Print source evidence after the answer."
         ),
     )
 
@@ -197,11 +187,8 @@ def parse_args() -> argparse.Namespace:
 
 
 # ============================================================================
-# Formatting
+# Console helpers
 # ============================================================================
-
-
-WIDTH = 110
 
 
 def separator(
@@ -229,44 +216,47 @@ def heading(
 def validate_args(
     args: argparse.Namespace,
 ) -> None:
+    repository = (
+        args.repository
+        .expanduser()
+        .resolve()
+    )
+
+    if not repository.exists():
+        raise FileNotFoundError(
+            f"Repository does not exist: "
+            f"{repository}"
+        )
+
+    if not repository.is_dir():
+        raise NotADirectoryError(
+            f"Repository path is not a directory: "
+            f"{repository}"
+        )
+
     if not args.query.strip():
         raise ValueError(
-            "query must not be empty."
+            "Query must not be empty."
         )
 
     if args.max_steps <= 0:
         raise ValueError(
-            "--max-steps must be > 0."
+            "--max-steps must be greater than 0."
         )
 
     if args.retrieval_top_k <= 0:
         raise ValueError(
-            "--retrieval-top-k must be > 0."
-        )
-
-    if args.candidate_size <= 0:
-        raise ValueError(
-            "--candidate-size must be > 0."
-        )
-
-    if args.graph_seeds < 0:
-        raise ValueError(
-            "--graph-seeds must be >= 0."
-        )
-
-    if args.graph_depth < 0:
-        raise ValueError(
-            "--graph-depth must be >= 0."
+            "--retrieval-top-k must be greater than 0."
         )
 
     if args.max_evidence_items <= 0:
         raise ValueError(
-            "--max-evidence-items must be > 0."
+            "--max-evidence-items must be greater than 0."
         )
 
     if args.max_characters <= 0:
         raise ValueError(
-            "--max-characters must be > 0."
+            "--max-characters must be greater than 0."
         )
 
     if args.max_graph_relations < 0:
@@ -281,7 +271,7 @@ def validate_args(
 
 
 # ============================================================================
-# Main
+# Main pipeline
 # ============================================================================
 
 
@@ -290,6 +280,12 @@ def main() -> int:
 
     validate_args(
         args
+    )
+
+    repository_path = (
+        args.repository
+        .expanduser()
+        .resolve()
     )
 
     print()
@@ -308,7 +304,7 @@ def main() -> int:
     print()
 
     # ========================================================================
-    # 1. Scan
+    # 1. Repository scanner
     # ========================================================================
 
     print(
@@ -319,8 +315,10 @@ def main() -> int:
         RepositoryScanner()
     )
 
-    scan_result = scanner.scan(
-        args.repository
+    scan_result = (
+        scanner.scan(
+            repository_path
+        )
     )
 
     print(
@@ -329,7 +327,7 @@ def main() -> int:
     )
 
     # ========================================================================
-    # 2. AST
+    # 2. Python AST analysis
     # ========================================================================
 
     print(
@@ -340,8 +338,10 @@ def main() -> int:
         PythonRepositoryAnalyzer()
     )
 
-    analysis = analyzer.analyze(
-        scan_result
+    analysis = (
+        analyzer.analyze(
+            scan_result
+        )
     )
 
     print(
@@ -355,7 +355,7 @@ def main() -> int:
     )
 
     # ========================================================================
-    # 3. Resolution
+    # 3. Deterministic symbol resolution
     # ========================================================================
 
     print(
@@ -369,8 +369,10 @@ def main() -> int:
     (
         resolved_analysis,
         resolution_summary,
-    ) = resolver.resolve_repository(
-        analysis
+    ) = (
+        resolver.resolve_repository(
+            analysis
+        )
     )
 
     print(
@@ -379,7 +381,7 @@ def main() -> int:
     )
 
     # ========================================================================
-    # 4. Chunks
+    # 4. Repository chunks
     # ========================================================================
 
     print(
@@ -390,9 +392,11 @@ def main() -> int:
         RepositoryChunkBuilder()
     )
 
-    chunks = chunk_builder.build(
-        scan_result=scan_result,
-        analysis=resolved_analysis,
+    chunks = (
+        chunk_builder.build(
+            scan_result=scan_result,
+            analysis=resolved_analysis,
+        )
     )
 
     print(
@@ -401,7 +405,7 @@ def main() -> int:
     )
 
     # ========================================================================
-    # 5. Symbol retrieval
+    # 5. Symbol search
     # ========================================================================
 
     print(
@@ -426,7 +430,7 @@ def main() -> int:
     )
 
     # ========================================================================
-    # 6. BM25
+    # 6. BM25 lexical search
     # ========================================================================
 
     print(
@@ -445,7 +449,7 @@ def main() -> int:
     )
 
     # ========================================================================
-    # 7. Semantic
+    # 7. Semantic retrieval
     # ========================================================================
 
     print(
@@ -489,7 +493,7 @@ def main() -> int:
     )
 
     # ========================================================================
-    # 8. Graph
+    # 8. Knowledge graph
     # ========================================================================
 
     print(
@@ -557,7 +561,7 @@ def main() -> int:
     )
 
     # ========================================================================
-    # 10. Evidence
+    # 10. Evidence assembly
     # ========================================================================
 
     print(
@@ -579,9 +583,7 @@ def main() -> int:
         EvidenceAssembler(
             chunks=chunks,
             graph=graph,
-            budget=(
-                evidence_budget
-            ),
+            budget=evidence_budget,
             max_graph_relations=(
                 args.max_graph_relations
             ),
@@ -593,7 +595,7 @@ def main() -> int:
     )
 
     # ========================================================================
-    # 11. Agent
+    # 11. Deterministic agent
     # ========================================================================
 
     print(
@@ -653,22 +655,23 @@ def main() -> int:
         f"{len(agent_result.graph_facts)}"
     )
 
+    evidence_count = 0
+
     if (
         agent_result.evidence
         is not None
     ):
-        print(
-            f"        Evidence items    : "
-            f"{len(agent_result.evidence.items)}"
+        evidence_count = len(
+            agent_result.evidence.items
         )
 
-    else:
-        print(
-            "        Evidence items    : 0"
-        )
+    print(
+        f"        Evidence items    : "
+        f"{evidence_count}"
+    )
 
     # ========================================================================
-    # 12. Local Qwen answer
+    # 12. Local Ollama answer generation
     # ========================================================================
 
     print(
@@ -709,7 +712,7 @@ def main() -> int:
     )
 
     # ========================================================================
-    # Output
+    # Question
     # ========================================================================
 
     heading(
@@ -720,6 +723,10 @@ def main() -> int:
         args.query
     )
 
+    # ========================================================================
+    # Answer
+    # ========================================================================
+
     heading(
         "REPOBRAIN ANSWER"
     )
@@ -729,7 +736,7 @@ def main() -> int:
     )
 
     # ========================================================================
-    # Citations
+    # Validated citations
     # ========================================================================
 
     heading(
@@ -737,11 +744,13 @@ def main() -> int:
     )
 
     if not answer.citations:
+
         print(
             "(none)"
         )
 
     else:
+
         for citation in (
             answer.citations
         ):
@@ -750,31 +759,78 @@ def main() -> int:
                 f"[{citation.citation_id}]"
             )
 
-            if (
-                citation.qualified_name
-            ):
-                print(
-                    f"  Symbol : "
-                    f"{citation.qualified_name}"
-                )
+            print(
+                f"  Type   : "
+                f"{citation.citation_kind.value}"
+            )
+
+            # ================================================================
+            # SOURCE citation
+            # ================================================================
 
             if (
-                citation.relative_path
+                citation.citation_kind
+                == AnswerCitationKind.SOURCE
             ):
-                print(
-                    f"  File   : "
-                    f"{citation.relative_path}"
+
+                if (
+                    citation.qualified_name
+                ):
+
+                    print(
+                        f"  Symbol : "
+                        f"{citation.qualified_name}"
+                    )
+
+                if (
+                    citation.relative_path
+                ):
+
+                    print(
+                        f"  File   : "
+                        f"{citation.relative_path}"
+                    )
+
+                if (
+                    citation.start_line
+                    is not None
+                ):
+
+                    print(
+                        f"  Lines  : "
+                        f"{citation.start_line}"
+                        f"-"
+                        f"{citation.end_line}"
+                    )
+
+            # ================================================================
+            # GRAPH citation
+            # ================================================================
+
+            elif (
+                citation.citation_kind
+                == AnswerCitationKind.GRAPH
+            ):
+
+                relationship_name = (
+                    citation.relationship_type.value
+                    if (
+                        citation.relationship_type
+                        is not None
+                    )
+                    else "UNKNOWN"
                 )
 
-            if (
-                citation.start_line
-                is not None
-            ):
                 print(
-                    f"  Lines  : "
-                    f"{citation.start_line}"
-                    f"-"
-                    f"{citation.end_line}"
+                    f"  Fact   : "
+                    f"{citation.source_qualified_name}"
+                )
+
+                print(
+                    f"           --"
+                    f"{relationship_name}"
+                    f"--> "
+                    f"{citation.target_qualified_name}"
                 )
 
             print()
@@ -794,6 +850,7 @@ def main() -> int:
         for citation_id in (
             answer.invalid_citation_ids
         ):
+
             print(
                 f"- [{citation_id}]"
             )
@@ -832,7 +889,7 @@ def main() -> int:
     )
 
     # ========================================================================
-    # Optional evidence
+    # Optional source evidence display
     # ========================================================================
 
     if (
@@ -840,8 +897,9 @@ def main() -> int:
         and agent_result.evidence
         is not None
     ):
+
         heading(
-            "EVIDENCE USED"
+            "SOURCE EVIDENCE"
         )
 
         bundle = (
@@ -852,14 +910,18 @@ def main() -> int:
             bundle.items,
             start=1,
         ):
+
             print(
-                f"[E{index}] "
+                f"[RAW-E{index}] "
                 f"{item.qualified_name or item.relative_path}"
             )
 
             separator()
 
-            if item.relative_path:
+            if (
+                item.relative_path
+            ):
+
                 print(
                     f"Path     : "
                     f"{item.relative_path}"
@@ -869,6 +931,7 @@ def main() -> int:
                 item.start_line
                 is not None
             ):
+
                 print(
                     f"Lines    : "
                     f"{item.start_line}"
@@ -877,33 +940,93 @@ def main() -> int:
                 )
 
             print(
-                "Channels : "
-                + ", ".join(
-                    channel.value
-                    for channel
-                    in item.retrieval_channels
-                )
+                f"Type     : "
+                f"{item.evidence_kind.value}"
             )
 
-            print()
+            if (
+                item.retrieval_channels
+            ):
 
+                print(
+                    "Channels : "
+                    + ", ".join(
+                        channel.value
+                        for channel
+                        in item.retrieval_channels
+                    )
+                )
+
+            if (
+                item.graph_context
+            ):
+
+                print(
+                    "Graph    :"
+                )
+
+                for relation in (
+                    item.graph_context
+                ):
+
+                    print(
+                        f"  "
+                        f"{relation.direction} "
+                        f"{relation.relationship_type.value} "
+                        f"{relation.related_qualified_name}"
+                    )
+
+            print()
             print(
                 item.source_text.rstrip()
             )
-
             print()
+
+    # ========================================================================
+    # Optional deterministic graph facts display
+    # ========================================================================
+
+    if (
+        args.show_evidence
+        and agent_result.graph_facts
+    ):
+
+        heading(
+            "GRAPH FACTS"
+        )
+
+        for index, fact in enumerate(
+            agent_result.graph_facts,
+            start=1,
+        ):
+
+            print(
+                f"[RAW-G{index}] "
+                f"{fact.source_qualified_name} "
+                f"--"
+                f"{fact.relationship_type.value}"
+                f"--> "
+                f"{fact.target_qualified_name}"
+            )
 
     # ========================================================================
     # Footer
     # ========================================================================
 
     print()
-
     separator("=")
 
-    print(
-        "RepoBrain query completed."
-    )
+    if answer.grounded:
+
+        print(
+            "RepoBrain query completed: GROUNDED."
+        )
+
+    else:
+
+        print(
+            "RepoBrain query completed: NOT FULLY GROUNDED."
+        )
 
     separator("=")
 
