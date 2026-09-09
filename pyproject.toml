@@ -58,6 +58,8 @@ dependencies = [
 
     "openai>=3.10,<4.0",
 
+    "ollama>=0.5,<1.0",
+
     # Embedding stack
     #
     # Sentence Transformers 6.x requires Transformers 5.x.

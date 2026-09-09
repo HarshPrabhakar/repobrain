@@ -62,6 +62,11 @@ from repobrain.models.agent import (
     AgentStep,
 )
 
+from repobrain.models.answer import (
+    AnswerCitation,
+    GroundedAnswer,
+)
+
 __all__ = [
     "FileMetadata",
     "RepositoryMetadata",
@@ -106,4 +111,7 @@ __all__ = [
     "AgentState",
     "AgentStatus",
     "AgentStep",
+
+    "AnswerCitation",
+    "GroundedAnswer",
 ]
