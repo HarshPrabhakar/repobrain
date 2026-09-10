@@ -18,19 +18,6 @@ class RepositoryFingerprint(
 ):
     """
     Immutable content fingerprint for one repository snapshot.
-
-    The fingerprint represents the deterministic set of files seen by
-    RepoBrain's repository scanner.
-
-    A fingerprint changes when:
-
-    - a tracked file is added
-    - a tracked file is removed
-    - a tracked file is renamed
-    - tracked file contents change
-
-    Metadata-only timestamp changes do not affect the fingerprint when
-    file content hashes remain unchanged.
     """
 
     model_config = ConfigDict(
@@ -63,18 +50,6 @@ class RepositoryRuntimeSnapshot(
     """
     Immutable diagnostic snapshot describing one loaded
     RepoBrain repository runtime.
-
-    This model intentionally contains metadata only.
-
-    It does not contain:
-
-    - repository source
-    - embeddings
-    - indexes
-    - graph objects
-    - prompts
-    - LLM state
-    - conversation history
     """
 
     model_config = ConfigDict(
@@ -114,3 +89,49 @@ class RepositoryRuntimeSnapshot(
         default=None,
         ge=0,
     )
+
+
+class ConversationSessionSnapshot(
+    BaseModel
+):
+    """
+    Immutable metadata for one application-level conversation session.
+
+    The snapshot deliberately contains no prompts, evidence bundles,
+    embeddings, or model-private state.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+        frozen=True,
+    )
+
+    session_id: str = Field(
+        min_length=1,
+    )
+
+    runtime_id: str = Field(
+        min_length=1,
+    )
+
+    repository_root: str = Field(
+        min_length=1,
+    )
+
+    conversation_id: str = Field(
+        min_length=1,
+    )
+
+    created_at: datetime
+
+    last_accessed_at: datetime
+
+    turn_number: int = Field(
+        ge=0,
+    )
+
+    current_qualified_name: str | None = None
+
+    relationship_focus_type: str | None = None
+
+    relationship_qualified_name: str | None = None

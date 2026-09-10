@@ -16,11 +16,19 @@ from repobrain.application.runtime import (
     RepositoryRuntime,
     RepositoryRuntimeClosedError,
 )
+from repobrain.application.sessions import (
+    ConversationSessionManager,
+    ConversationSessionNotFoundError,
+    ConversationSessionRuntimeMismatchError,
+)
 
 
 __all__ = [
     "AgentRunner",
     "AnswerGenerator",
+    "ConversationSessionManager",
+    "ConversationSessionNotFoundError",
+    "ConversationSessionRuntimeMismatchError",
     "ProgressCallback",
     "RepositoryFingerprintProvider",
     "RepositoryFingerprinter",
