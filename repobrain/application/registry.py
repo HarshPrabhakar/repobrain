@@ -2,15 +2,14 @@ from __future__ import annotations
 
 from pathlib import Path
 from threading import RLock
-from typing import (
-    Callable,
-)
+from typing import Callable
 
 from repobrain.application.runtime import (
     RepositoryRuntime,
 )
 
 from repobrain.models.application import (
+    RepositoryFingerprint,
     RepositoryRuntimeSnapshot,
 )
 
@@ -20,33 +19,47 @@ RepositoryRuntimeFactory = Callable[
     RepositoryRuntime,
 ]
 
+RepositoryFingerprintProvider = Callable[
+    [Path],
+    RepositoryFingerprint,
+]
+
 
 class RepositoryRuntimeRegistry:
     """
     Process-local registry of loaded repository runtimes.
 
-    Exactly one runtime is retained per canonical repository path.
+    Phase 10.3 adds content-aware invalidation.
 
-    This gives RepoBrain its first application-level cache:
+    When a fingerprint provider is configured:
 
-        same repository
-            -> same RepositoryRuntime
+        unchanged repository
+            -> reuse current runtime
 
-        different repository
-            -> different RepositoryRuntime
+        changed repository
+            -> close stale runtime
+            -> rebuild runtime
 
-    Conversation state is NOT cached here.
-    Each runtime creates independent conversations.
+    Without a fingerprint provider, Phase 10.1 path-only reuse remains
+    available for backward compatibility and isolated tests.
     """
 
     def __init__(
         self,
         *,
         runtime_factory: RepositoryRuntimeFactory,
+        fingerprint_provider: (
+            RepositoryFingerprintProvider
+            | None
+        ) = None,
     ) -> None:
 
         self._runtime_factory = (
             runtime_factory
+        )
+
+        self._fingerprint_provider = (
+            fingerprint_provider
         )
 
         self._runtimes: dict[
@@ -67,10 +80,10 @@ class RepositoryRuntimeRegistry:
         repository_root: Path,
     ) -> RepositoryRuntime:
         """
-        Return the cached runtime for a repository or build it once.
+        Return a valid cached runtime or build a new one.
 
-        Path comparison is case-insensitive so the registry behaves
-        safely on the user's Windows environment.
+        If fingerprint validation is enabled, stale runtimes are never
+        returned.
         """
 
         normalized_root = (
@@ -98,7 +111,19 @@ class RepositoryRuntimeRegistry:
                 and not existing.closed
             ):
 
-                return existing
+                if self._runtime_is_current(
+                    existing,
+                    normalized_root,
+                ):
+
+                    return existing
+
+                self._runtimes.pop(
+                    key,
+                    None,
+                )
+
+                existing.close()
 
             runtime = (
                 self._runtime_factory(
@@ -116,6 +141,21 @@ class RepositoryRuntimeRegistry:
                     "for a different repository."
                 )
 
+            if (
+                self._fingerprint_provider
+                is not None
+                and runtime.fingerprint
+                is None
+            ):
+
+                runtime.close()
+
+                raise RuntimeError(
+                    "Fingerprint-aware registry requires "
+                    "runtime_factory to return a runtime "
+                    "with a repository fingerprint."
+                )
+
             self._runtimes[
                 key
             ] = runtime
@@ -127,7 +167,10 @@ class RepositoryRuntimeRegistry:
         repository_root: Path,
     ) -> RepositoryRuntime | None:
         """
-        Return a currently loaded runtime without creating one.
+        Return a loaded runtime without creating one.
+
+        When fingerprint validation is configured, get() also refuses
+        stale runtimes and evicts them.
         """
 
         normalized_root = (
@@ -154,6 +197,21 @@ class RepositoryRuntimeRegistry:
                 runtime is None
                 or runtime.closed
             ):
+
+                return None
+
+            if not self._runtime_is_current(
+                runtime,
+                normalized_root,
+            ):
+
+                self._runtimes.pop(
+                    key,
+                    None,
+                )
+
+                runtime.close()
+
                 return None
 
             return runtime
@@ -174,11 +232,6 @@ class RepositoryRuntimeRegistry:
         self,
         repository_root: Path,
     ) -> bool:
-        """
-        Remove and close one loaded repository runtime.
-
-        Returns True when a runtime existed.
-        """
 
         normalized_root = (
             self._normalize_root(
@@ -211,9 +264,6 @@ class RepositoryRuntimeRegistry:
     def clear(
         self,
     ) -> None:
-        """
-        Close and remove every loaded runtime.
-        """
 
         with self._lock:
 
@@ -237,9 +287,6 @@ class RepositoryRuntimeRegistry:
         RepositoryRuntimeSnapshot,
         ...,
     ]:
-        """
-        Return deterministic snapshots of loaded runtimes.
-        """
 
         with self._lock:
 
@@ -278,6 +325,48 @@ class RepositoryRuntimeRegistry:
             )
 
     # ==================================================================
+    # Fingerprint validation
+    # ==================================================================
+
+    def _runtime_is_current(
+        self,
+        runtime: RepositoryRuntime,
+        repository_root: Path,
+    ) -> bool:
+        """
+        Return True only when the runtime fingerprint still matches the
+        current repository content.
+
+        A runtime with no fingerprint is considered stale when the
+        registry is operating in fingerprint-aware mode.
+        """
+
+        provider = (
+            self._fingerprint_provider
+        )
+
+        if provider is None:
+            return True
+
+        runtime_fingerprint = (
+            runtime.fingerprint
+        )
+
+        if runtime_fingerprint is None:
+            return False
+
+        current_fingerprint = (
+            provider(
+                repository_root
+            )
+        )
+
+        return (
+            current_fingerprint
+            == runtime_fingerprint
+        )
+
+    # ==================================================================
     # Path helpers
     # ==================================================================
 
@@ -312,11 +401,6 @@ class RepositoryRuntimeRegistry:
     def _repository_key(
         repository_root: Path,
     ) -> str:
-        """
-        Case-insensitive canonical cache key.
-
-        This intentionally matches Windows repository path behavior.
-        """
 
         return (
             str(

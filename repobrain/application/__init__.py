@@ -2,7 +2,11 @@ from repobrain.application.builder import (
     ProgressCallback,
     RepositoryRuntimeBuilder,
 )
+from repobrain.application.fingerprint import (
+    RepositoryFingerprinter,
+)
 from repobrain.application.registry import (
+    RepositoryFingerprintProvider,
     RepositoryRuntimeFactory,
     RepositoryRuntimeRegistry,
 )
@@ -18,6 +22,8 @@ __all__ = [
     "AgentRunner",
     "AnswerGenerator",
     "ProgressCallback",
+    "RepositoryFingerprintProvider",
+    "RepositoryFingerprinter",
     "RepositoryRuntime",
     "RepositoryRuntimeBuilder",
     "RepositoryRuntimeClosedError",

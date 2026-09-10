@@ -9,6 +9,7 @@ import repobrain.agent as agent_package
 import repobrain.llm as llm_package
 
 from repobrain.answering import GroundedAnswerGenerator
+from repobrain.application.fingerprint import RepositoryFingerprinter
 from repobrain.application.runtime import RepositoryRuntime
 from repobrain.embeddings import SentenceTransformerEmbeddingProvider
 from repobrain.evidence import EvidenceAssembler, EvidenceBudget
@@ -26,22 +27,25 @@ from repobrain.retrieval.chunks import RepositoryChunkBuilder
 from repobrain.retrieval.lexical import BM25Index
 
 
-ProgressCallback = Callable[[int, int, str, dict[str, object]], None]
+ProgressCallback = Callable[
+    [
+        int,
+        int,
+        str,
+        dict[str, object],
+    ],
+    None,
+]
 
 
 class RepositoryRuntimeBuilder:
     """
     Build one long-lived RepositoryRuntime from a local repository.
 
-    Phase 10.2 moves the expensive repository-intelligence pipeline
-    out of the CLI and into the application layer.
+    Phase 10.3 attaches a deterministic repository fingerprint to every
+    runtime using the already-produced Phase-1 scan result.
 
-    The builder owns construction only. The resulting runtime owns
-    the reusable agent runner and grounded answer generator.
-
-    Conversation state is created later through:
-
-        runtime.create_conversation()
+    This avoids scanning the repository twice during an initial build.
     """
 
     TOTAL_STEPS = 12
@@ -61,19 +65,29 @@ class RepositoryRuntimeBuilder:
     ) -> None:
 
         if max_steps < 1:
-            raise ValueError("max_steps must be >= 1")
+            raise ValueError(
+                "max_steps must be >= 1"
+            )
 
         if retrieval_top_k < 1:
-            raise ValueError("retrieval_top_k must be >= 1")
+            raise ValueError(
+                "retrieval_top_k must be >= 1"
+            )
 
         if max_evidence_items < 1:
-            raise ValueError("max_evidence_items must be >= 1")
+            raise ValueError(
+                "max_evidence_items must be >= 1"
+            )
 
         if max_characters < 1:
-            raise ValueError("max_characters must be >= 1")
+            raise ValueError(
+                "max_characters must be >= 1"
+            )
 
         if max_graph_relations < 1:
-            raise ValueError("max_graph_relations must be >= 1")
+            raise ValueError(
+                "max_graph_relations must be >= 1"
+            )
 
         self.ollama_host = ollama_host
         self.ollama_model = ollama_model
@@ -95,13 +109,12 @@ class RepositoryRuntimeBuilder:
     ) -> RepositoryRuntime:
         """
         Build the complete reusable RepoBrain runtime.
-
-        The returned RepositoryRuntime can create multiple independent
-        conversations without rebuilding repository intelligence.
         """
 
-        repository_root = self._validate_repository_root(
-            repository_root
+        repository_root = (
+            self._validate_repository_root(
+                repository_root
+            )
         )
 
         # ==============================================================
@@ -113,16 +126,34 @@ class RepositoryRuntimeBuilder:
             "Scanning repository...",
         )
 
-        scanner = RepositoryScanner()
+        scanner = (
+            RepositoryScanner()
+        )
 
-        scan_result = scanner.scan(
-            repository_root
+        scan_result = (
+            scanner.scan(
+                repository_root
+            )
+        )
+
+        fingerprint = (
+            RepositoryFingerprinter
+            .from_scan_result(
+                scan_result
+            )
         )
 
         self._progress(
             1,
             "Scanning repository...",
-            files_discovered=len(scan_result.files),
+            files_discovered=(
+                len(
+                    scan_result.files
+                )
+            ),
+            fingerprint=(
+                fingerprint.value
+            ),
         )
 
         # ==============================================================
@@ -134,17 +165,29 @@ class RepositoryRuntimeBuilder:
             "Extracting Python AST...",
         )
 
-        analyzer = PythonRepositoryAnalyzer()
+        analyzer = (
+            PythonRepositoryAnalyzer()
+        )
 
-        analysis = analyzer.analyze(
-            scan_result
+        analysis = (
+            analyzer.analyze(
+                scan_result
+            )
         )
 
         self._progress(
             2,
             "Extracting Python AST...",
-            symbols=len(analysis.symbols),
-            relationships=len(analysis.relationships),
+            symbols=(
+                len(
+                    analysis.symbols
+                )
+            ),
+            relationships=(
+                len(
+                    analysis.relationships
+                )
+            ),
         )
 
         # ==============================================================
@@ -156,7 +199,9 @@ class RepositoryRuntimeBuilder:
             "Resolving repository symbols...",
         )
 
-        resolver = PythonSymbolResolver()
+        resolver = (
+            PythonSymbolResolver()
+        )
 
         (
             resolved_analysis,
@@ -170,8 +215,10 @@ class RepositoryRuntimeBuilder:
         self._progress(
             3,
             "Resolving repository symbols...",
-            resolved_symbols=len(
-                resolved_analysis.symbols
+            resolved_symbols=(
+                len(
+                    resolved_analysis.symbols
+                )
             ),
         )
 
@@ -184,17 +231,29 @@ class RepositoryRuntimeBuilder:
             "Building repository chunks...",
         )
 
-        chunk_builder = RepositoryChunkBuilder()
+        chunk_builder = (
+            RepositoryChunkBuilder()
+        )
 
-        chunks = chunk_builder.build(
-            scan_result=scan_result,
-            analysis=resolved_analysis,
+        chunks = (
+            chunk_builder.build(
+                scan_result=(
+                    scan_result
+                ),
+                analysis=(
+                    resolved_analysis
+                ),
+            )
         )
 
         self._progress(
             4,
             "Building repository chunks...",
-            chunks=len(chunks),
+            chunks=(
+                len(
+                    chunks
+                )
+            ),
         )
 
         # ==============================================================
@@ -206,19 +265,25 @@ class RepositoryRuntimeBuilder:
             "Building symbol index...",
         )
 
-        symbol_index = SymbolIndex(
-            resolved_analysis.symbols
+        symbol_index = (
+            SymbolIndex(
+                resolved_analysis.symbols
+            )
         )
 
-        symbol_engine = SymbolSearchEngine(
-            symbol_index
+        symbol_engine = (
+            SymbolSearchEngine(
+                symbol_index
+            )
         )
 
         self._progress(
             5,
             "Building symbol index...",
-            indexed_symbols=len(
-                resolved_analysis.symbols
+            indexed_symbols=(
+                len(
+                    resolved_analysis.symbols
+                )
             ),
         )
 
@@ -231,14 +296,20 @@ class RepositoryRuntimeBuilder:
             "Building BM25 index...",
         )
 
-        lexical_engine = BM25Index(
-            chunks
+        lexical_engine = (
+            BM25Index(
+                chunks
+            )
         )
 
         self._progress(
             6,
             "Building BM25 index...",
-            bm25_documents=len(chunks),
+            bm25_documents=(
+                len(
+                    chunks
+                )
+            ),
         )
 
         # ==============================================================
@@ -254,13 +325,17 @@ class RepositoryRuntimeBuilder:
             SentenceTransformerEmbeddingProvider()
         )
 
-        semantic_engine = SemanticSearchEngine(
-            chunks,
-            embedding_provider,
-            symbols=resolved_analysis.symbols,
-            relationships=(
-                resolved_analysis.relationships
-            ),
+        semantic_engine = (
+            SemanticSearchEngine(
+                chunks,
+                embedding_provider,
+                symbols=(
+                    resolved_analysis.symbols
+                ),
+                relationships=(
+                    resolved_analysis.relationships
+                ),
+            )
         )
 
         self._progress(
@@ -275,7 +350,9 @@ class RepositoryRuntimeBuilder:
             dimension=(
                 embedding_provider.dimension
             ),
-            semantic_index="READY",
+            semantic_index=(
+                "READY"
+            ),
         )
 
         # ==============================================================
@@ -287,38 +364,54 @@ class RepositoryRuntimeBuilder:
             "Building knowledge graph...",
         )
 
-        graph = RepositoryKnowledgeGraph(
-            symbols=resolved_analysis.symbols,
-            relationships=(
-                resolved_analysis.relationships
-            ),
+        graph = (
+            RepositoryKnowledgeGraph(
+                symbols=(
+                    resolved_analysis.symbols
+                ),
+                relationships=(
+                    resolved_analysis.relationships
+                ),
+            )
         )
 
-        graph_stats = graph.stats()
-
-        node_count = self._first_existing_attribute(
-            graph_stats,
-            "node_count",
-            "nodes",
-            "total_nodes",
-            default=len(
-                resolved_analysis.symbols
-            ),
+        graph_stats = (
+            graph.stats()
         )
 
-        edge_count = self._first_existing_attribute(
-            graph_stats,
-            "edge_count",
-            "edges",
-            "total_edges",
-            default=0,
+        node_count = (
+            self._first_existing_attribute(
+                graph_stats,
+                "node_count",
+                "nodes",
+                "total_nodes",
+                default=(
+                    len(
+                        resolved_analysis.symbols
+                    )
+                ),
+            )
+        )
+
+        edge_count = (
+            self._first_existing_attribute(
+                graph_stats,
+                "edge_count",
+                "edges",
+                "total_edges",
+                default=0,
+            )
         )
 
         self._progress(
             8,
             "Building knowledge graph...",
-            graph_nodes=node_count,
-            graph_edges=edge_count,
+            graph_nodes=(
+                node_count
+            ),
+            graph_edges=(
+                edge_count
+            ),
         )
 
         # ==============================================================
@@ -337,22 +430,36 @@ class RepositoryRuntimeBuilder:
                     "graph": graph,
                     "knowledge_graph": graph,
                     "repository_graph": graph,
-                    "symbol_index": symbol_index,
+                    "symbol_index": (
+                        symbol_index
+                    ),
                 },
             )
         )
 
-        hybrid_engine = HybridRetrievalEngine(
-            symbol_engine=symbol_engine,
-            lexical_engine=lexical_engine,
-            semantic_engine=semantic_engine,
-            graph_expander=graph_expander,
+        hybrid_engine = (
+            HybridRetrievalEngine(
+                symbol_engine=(
+                    symbol_engine
+                ),
+                lexical_engine=(
+                    lexical_engine
+                ),
+                semantic_engine=(
+                    semantic_engine
+                ),
+                graph_expander=(
+                    graph_expander
+                ),
+            )
         )
 
         self._progress(
             9,
             "Building hybrid retrieval...",
-            hybrid_engine="READY",
+            hybrid_engine=(
+                "READY"
+            ),
         )
 
         # ==============================================================
@@ -364,25 +471,36 @@ class RepositoryRuntimeBuilder:
             "Building evidence assembler...",
         )
 
-        evidence_budget = EvidenceBudget(
-            max_items=self.max_evidence_items,
-            max_characters=self.max_characters,
+        evidence_budget = (
+            EvidenceBudget(
+                max_items=(
+                    self.max_evidence_items
+                ),
+                max_characters=(
+                    self.max_characters
+                ),
+            )
         )
 
         evidence_assembler = (
             self._construct_from_supported_kwargs(
                 EvidenceAssembler,
                 available={
-                    "budget": evidence_budget,
+                    "budget": (
+                        evidence_budget
+                    ),
                     "chunks": chunks,
                     "graph": graph,
                     "knowledge_graph": graph,
-                    "symbol_index": symbol_index,
+                    "symbol_index": (
+                        symbol_index
+                    ),
                     "symbols": (
                         resolved_analysis.symbols
                     ),
                     "relationships": (
-                        resolved_analysis.relationships
+                        resolved_analysis
+                        .relationships
                     ),
                 },
             )
@@ -391,7 +509,9 @@ class RepositoryRuntimeBuilder:
         self._progress(
             10,
             "Building evidence assembler...",
-            evidence_layer="READY",
+            evidence_layer=(
+                "READY"
+            ),
         )
 
         # ==============================================================
@@ -403,21 +523,47 @@ class RepositoryRuntimeBuilder:
             "Building deterministic agent...",
         )
 
-        agent_tools = self._build_agent_tools(
-            hybrid_engine=hybrid_engine,
-            graph=graph,
-            evidence_assembler=evidence_assembler,
-            symbol_index=symbol_index,
-            chunks=chunks,
-            resolved_analysis=resolved_analysis,
+        agent_tools = (
+            self._build_agent_tools(
+                hybrid_engine=(
+                    hybrid_engine
+                ),
+                graph=(
+                    graph
+                ),
+                evidence_assembler=(
+                    evidence_assembler
+                ),
+                symbol_index=(
+                    symbol_index
+                ),
+                chunks=(
+                    chunks
+                ),
+                resolved_analysis=(
+                    resolved_analysis
+                ),
+            )
         )
 
-        base_agent = self._build_base_agent(
-            tools=agent_tools,
-            hybrid_engine=hybrid_engine,
-            graph=graph,
-            evidence_assembler=evidence_assembler,
-            symbol_index=symbol_index,
+        base_agent = (
+            self._build_base_agent(
+                tools=(
+                    agent_tools
+                ),
+                hybrid_engine=(
+                    hybrid_engine
+                ),
+                graph=(
+                    graph
+                ),
+                evidence_assembler=(
+                    evidence_assembler
+                ),
+                symbol_index=(
+                    symbol_index
+                ),
+            )
         )
 
         agent_run = getattr(
@@ -426,17 +572,27 @@ class RepositoryRuntimeBuilder:
             None,
         )
 
-        if not callable(agent_run):
+        if not callable(
+            agent_run
+        ):
+
             raise RuntimeError(
                 f"{type(base_agent).__name__} "
-                "does not expose a callable run(query) method."
+                "does not expose a callable "
+                "run(query) method."
             )
 
         self._progress(
             11,
             "Building deterministic agent...",
-            agent=type(base_agent).__name__,
-            stateful_agent="READY",
+            agent=(
+                type(
+                    base_agent
+                ).__name__
+            ),
+            stateful_agent=(
+                "READY"
+            ),
         )
 
         # ==============================================================
@@ -454,7 +610,9 @@ class RepositoryRuntimeBuilder:
 
         answer_generator = (
             GroundedAnswerGenerator(
-                provider=llm_provider
+                provider=(
+                    llm_provider
+                )
             )
         )
 
@@ -463,21 +621,36 @@ class RepositoryRuntimeBuilder:
                 llm_provider,
                 "model_name",
                 "model",
-                default=self.ollama_model,
+                default=(
+                    self.ollama_model
+                ),
             )
         )
 
         self._progress(
             12,
             "Loading grounded answer layer...",
-            llm_model=provider_model,
-            grounded_qa="READY",
+            llm_model=(
+                provider_model
+            ),
+            grounded_qa=(
+                "READY"
+            ),
         )
 
         return RepositoryRuntime(
-            repository_root=repository_root,
-            agent_runner=agent_run,
-            answer_generator=answer_generator,
+            repository_root=(
+                repository_root
+            ),
+            agent_runner=(
+                agent_run
+            ),
+            answer_generator=(
+                answer_generator
+            ),
+            fingerprint=(
+                fingerprint
+            ),
         )
 
     # ==================================================================
@@ -495,41 +668,70 @@ class RepositoryRuntimeBuilder:
         resolved_analysis: object,
     ) -> object:
 
-        tools_class = self._find_class(
-            agent_package,
-            preferred_names=(
-                "AgentToolbox",
-                "RepoBrainAgentTools",
-                "AgentTools",
-                "RepositoryAgentTools",
-            ),
-            name_contains=(
-                "tool",
-            ),
+        tools_class = (
+            self._find_class(
+                agent_package,
+                preferred_names=(
+                    "AgentToolbox",
+                    "RepoBrainAgentTools",
+                    "AgentTools",
+                    "RepositoryAgentTools",
+                ),
+                name_contains=(
+                    "tool",
+                ),
+            )
         )
 
-        return self._construct_from_supported_kwargs(
-            tools_class,
-            available={
-                "hybrid_engine": hybrid_engine,
-                "hybrid_retriever": hybrid_engine,
-                "retrieval_engine": hybrid_engine,
-                "retriever": hybrid_engine,
-                "graph": graph,
-                "knowledge_graph": graph,
-                "repository_graph": graph,
-                "evidence_assembler": evidence_assembler,
-                "assembler": evidence_assembler,
-                "symbol_index": symbol_index,
-                "index": symbol_index,
-                "chunks": chunks,
-                "symbols": (
-                    resolved_analysis.symbols
-                ),
-                "relationships": (
-                    resolved_analysis.relationships
-                ),
-            },
+        return (
+            self._construct_from_supported_kwargs(
+                tools_class,
+                available={
+                    "hybrid_engine": (
+                        hybrid_engine
+                    ),
+                    "hybrid_retriever": (
+                        hybrid_engine
+                    ),
+                    "retrieval_engine": (
+                        hybrid_engine
+                    ),
+                    "retriever": (
+                        hybrid_engine
+                    ),
+                    "graph": (
+                        graph
+                    ),
+                    "knowledge_graph": (
+                        graph
+                    ),
+                    "repository_graph": (
+                        graph
+                    ),
+                    "evidence_assembler": (
+                        evidence_assembler
+                    ),
+                    "assembler": (
+                        evidence_assembler
+                    ),
+                    "symbol_index": (
+                        symbol_index
+                    ),
+                    "index": (
+                        symbol_index
+                    ),
+                    "chunks": (
+                        chunks
+                    ),
+                    "symbols": (
+                        resolved_analysis.symbols
+                    ),
+                    "relationships": (
+                        resolved_analysis
+                        .relationships
+                    ),
+                },
+            )
         )
 
     def _build_base_agent(
@@ -542,43 +744,75 @@ class RepositoryRuntimeBuilder:
         symbol_index: SymbolIndex,
     ) -> object:
 
-        orchestrator_class = self._find_class(
-            agent_package,
-            preferred_names=(
-                "RepoBrainAgentOrchestrator",
-                "AgentOrchestrator",
-                "DeterministicRepoBrainAgent",
-                "RepoBrainAgent",
-            ),
-            name_contains=(
-                "orchestrator",
-            ),
+        orchestrator_class = (
+            self._find_class(
+                agent_package,
+                preferred_names=(
+                    "RepoBrainAgentOrchestrator",
+                    "AgentOrchestrator",
+                    "DeterministicRepoBrainAgent",
+                    "RepoBrainAgent",
+                ),
+                name_contains=(
+                    "orchestrator",
+                ),
+            )
         )
 
-        return self._construct_from_supported_kwargs(
-            orchestrator_class,
-            available={
-                "toolbox": tools,
-                "tools": tools,
-                "agent_tools": tools,
-                "hybrid_engine": hybrid_engine,
-                "hybrid_retriever": hybrid_engine,
-                "retrieval_engine": hybrid_engine,
-                "graph": graph,
-                "knowledge_graph": graph,
-                "evidence_assembler": evidence_assembler,
-                "assembler": evidence_assembler,
-                "symbol_index": symbol_index,
-                "max_steps": self.max_steps,
-                "max_agent_steps": self.max_steps,
-                "retrieval_top_k": (
-                    self.retrieval_top_k
-                ),
-                "top_k": self.retrieval_top_k,
-                "max_graph_relations": (
-                    self.max_graph_relations
-                ),
-            },
+        return (
+            self._construct_from_supported_kwargs(
+                orchestrator_class,
+                available={
+                    "toolbox": (
+                        tools
+                    ),
+                    "tools": (
+                        tools
+                    ),
+                    "agent_tools": (
+                        tools
+                    ),
+                    "hybrid_engine": (
+                        hybrid_engine
+                    ),
+                    "hybrid_retriever": (
+                        hybrid_engine
+                    ),
+                    "retrieval_engine": (
+                        hybrid_engine
+                    ),
+                    "graph": (
+                        graph
+                    ),
+                    "knowledge_graph": (
+                        graph
+                    ),
+                    "evidence_assembler": (
+                        evidence_assembler
+                    ),
+                    "assembler": (
+                        evidence_assembler
+                    ),
+                    "symbol_index": (
+                        symbol_index
+                    ),
+                    "max_steps": (
+                        self.max_steps
+                    ),
+                    "max_agent_steps": (
+                        self.max_steps
+                    ),
+                    "retrieval_top_k": (
+                        self.retrieval_top_k
+                    ),
+                    "top_k": (
+                        self.retrieval_top_k
+                    ),
+                    "max_graph_relations": (
+                        self.max_graph_relations
+                    ),
+                },
+            )
         )
 
     # ==================================================================
@@ -589,28 +823,46 @@ class RepositoryRuntimeBuilder:
         self,
     ) -> object:
 
-        provider_class = self._find_class(
-            llm_package,
-            preferred_names=(
-                "OllamaLLMProvider",
-            ),
-            name_contains=(
-                "ollama",
-                "provider",
-            ),
+        provider_class = (
+            self._find_class(
+                llm_package,
+                preferred_names=(
+                    "OllamaLLMProvider",
+                ),
+                name_contains=(
+                    "ollama",
+                    "provider",
+                ),
+            )
         )
 
-        return self._construct_from_supported_kwargs(
-            provider_class,
-            available={
-                "host": self.ollama_host,
-                "base_url": self.ollama_host,
-                "ollama_host": self.ollama_host,
-                "url": self.ollama_host,
-                "model": self.ollama_model,
-                "model_name": self.ollama_model,
-                "temperature": self.temperature,
-            },
+        return (
+            self._construct_from_supported_kwargs(
+                provider_class,
+                available={
+                    "host": (
+                        self.ollama_host
+                    ),
+                    "base_url": (
+                        self.ollama_host
+                    ),
+                    "ollama_host": (
+                        self.ollama_host
+                    ),
+                    "url": (
+                        self.ollama_host
+                    ),
+                    "model": (
+                        self.ollama_model
+                    ),
+                    "model_name": (
+                        self.ollama_model
+                    ),
+                    "temperature": (
+                        self.temperature
+                    ),
+                },
+            )
         )
 
     # ==================================================================
@@ -624,7 +876,10 @@ class RepositoryRuntimeBuilder:
         **details: object,
     ) -> None:
 
-        if self.progress_callback is None:
+        if (
+            self.progress_callback
+            is None
+        ):
             return
 
         self.progress_callback(
@@ -646,7 +901,9 @@ class RepositoryRuntimeBuilder:
         name_contains: tuple[str, ...] = (),
     ) -> type:
 
-        for name in preferred_names:
+        for name in (
+            preferred_names
+        ):
 
             value = getattr(
                 module,
@@ -657,9 +914,12 @@ class RepositoryRuntimeBuilder:
             if inspect.isclass(
                 value
             ):
+
                 return value
 
-        candidates: list[type] = []
+        candidates: list[
+            type
+        ] = []
 
         for name in dir(
             module
@@ -673,75 +933,114 @@ class RepositoryRuntimeBuilder:
             if not inspect.isclass(
                 value
             ):
+
                 continue
 
-            lowered = name.lower()
+            lowered = (
+                name.lower()
+            )
 
             if all(
                 token.lower()
                 in lowered
-                for token in name_contains
+                for token
+                in name_contains
             ):
 
                 candidates.append(
                     value
                 )
 
-        if len(candidates) == 1:
-            return candidates[0]
+        if len(
+            candidates
+        ) == 1:
+
+            return (
+                candidates[0]
+            )
 
         exported = [
             name
-            for name in dir(module)
-            if not name.startswith("_")
+            for name
+            in dir(module)
+            if not name.startswith(
+                "_"
+            )
         ]
 
         raise RuntimeError(
-            "Could not determine the required RepoBrain class.\n"
+            "Could not determine the required "
+            "RepoBrain class.\n"
             f"Module: {module.__name__}\n"
-            f"Preferred names: {preferred_names}\n"
-            f"Available exports: {exported}"
+            f"Preferred names: "
+            f"{preferred_names}\n"
+            f"Available exports: "
+            f"{exported}"
         )
 
     @staticmethod
     def _construct_from_supported_kwargs(
         cls: type,
         *,
-        available: dict[str, object],
+        available: dict[
+            str,
+            object,
+        ],
     ) -> object:
 
-        signature = inspect.signature(
-            cls
+        signature = (
+            inspect.signature(
+                cls
+            )
         )
 
-        kwargs: dict[str, object] = {}
+        kwargs: dict[
+            str,
+            object,
+        ] = {}
 
-        missing_required: list[str] = []
+        missing_required: list[
+            str
+        ] = []
 
         for (
             name,
             parameter,
-        ) in signature.parameters.items():
+        ) in (
+            signature
+            .parameters
+            .items()
+        ):
 
             if name in {
                 "self",
                 "cls",
             }:
+
                 continue
 
             if (
                 parameter.kind
                 in {
-                    inspect.Parameter.VAR_KEYWORD,
-                    inspect.Parameter.VAR_POSITIONAL,
+                    inspect.Parameter
+                    .VAR_KEYWORD,
+                    inspect.Parameter
+                    .VAR_POSITIONAL,
                 }
             ):
+
                 continue
 
-            if name in available:
+            if name in (
+                available
+            ):
 
-                kwargs[name] = (
-                    available[name]
+                kwargs[
+                    name
+                ] = (
+                    available[
+                        name
+                    ]
                 )
 
                 continue
@@ -755,12 +1054,16 @@ class RepositoryRuntimeBuilder:
                     name
                 )
 
-        if missing_required:
+        if (
+            missing_required
+        ):
 
             raise RuntimeError(
                 f"Cannot construct "
-                f"{cls.__module__}.{cls.__name__}.\n"
-                "Unsupported required constructor parameter(s): "
+                f"{cls.__module__}."
+                f"{cls.__name__}.\n"
+                "Unsupported required constructor "
+                "parameter(s): "
                 f"{', '.join(missing_required)}\n"
                 f"Signature: {signature}"
             )

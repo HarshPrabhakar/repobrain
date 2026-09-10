@@ -2,10 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from threading import RLock
-from typing import (
-    Callable,
-    Protocol,
-)
+from typing import Protocol
 
 from repobrain.conversation import (
     StatefulGroundedAnsweringOrchestrator,
@@ -13,6 +10,7 @@ from repobrain.conversation import (
 )
 
 from repobrain.models.application import (
+    RepositoryFingerprint,
     RepositoryRuntimeSnapshot,
 )
 
@@ -60,20 +58,11 @@ class RepositoryRuntime:
     """
     Long-lived application runtime for one repository.
 
-    The runtime owns the expensive, reusable repository
-    intelligence dependencies indirectly through:
+    Repository lifetime and conversation lifetime are deliberately
+    separate.
 
-        agent_runner
-        answer_generator
-
-    New conversations receive fresh Phase-9 conversation
-    state while reusing those shared dependencies.
-
-    This is the key separation introduced by Phase 10:
-
-        repository lifetime != conversation lifetime
-
-    The runtime does not mutate repository files.
+    Phase 10.3 additionally attaches the repository content fingerprint
+    that was valid when this runtime was built.
     """
 
     def __init__(
@@ -82,6 +71,7 @@ class RepositoryRuntime:
         repository_root: Path,
         agent_runner: AgentRunner,
         answer_generator: AnswerGenerator,
+        fingerprint: RepositoryFingerprint | None = None,
     ) -> None:
 
         normalized_root = (
@@ -116,6 +106,10 @@ class RepositoryRuntime:
             answer_generator
         )
 
+        self._fingerprint = (
+            fingerprint
+        )
+
         self._runtime_id = (
             RepositoryRuntimeSnapshot(
                 repository_root=(
@@ -137,6 +131,21 @@ class RepositoryRuntime:
                         normalized_root
                     )
                 ),
+                fingerprint_algorithm=(
+                    fingerprint.algorithm
+                    if fingerprint is not None
+                    else None
+                ),
+                fingerprint_value=(
+                    fingerprint.value
+                    if fingerprint is not None
+                    else None
+                ),
+                fingerprint_file_count=(
+                    fingerprint.file_count
+                    if fingerprint is not None
+                    else None
+                ),
             )
         )
 
@@ -156,9 +165,6 @@ class RepositoryRuntime:
     def runtime_id(
         self,
     ) -> str:
-        """
-        Stable ID for the lifetime of this loaded runtime.
-        """
 
         return (
             self._runtime_id
@@ -168,21 +174,27 @@ class RepositoryRuntime:
     def repository_root(
         self,
     ) -> Path:
-        """
-        Canonical repository root owned by this runtime.
-        """
 
         return (
             self._repository_root
         )
 
     @property
+    def fingerprint(
+        self,
+    ) -> RepositoryFingerprint | None:
+        """
+        Fingerprint that was valid when this runtime was built.
+        """
+
+        return (
+            self._fingerprint
+        )
+
+    @property
     def conversation_count(
         self,
     ) -> int:
-        """
-        Number of conversations created from this runtime.
-        """
 
         with self._lock:
 
@@ -209,12 +221,8 @@ class RepositoryRuntime:
         self,
     ) -> StatefulGroundedAnsweringOrchestrator:
         """
-        Create one independent Phase-9 conversation.
-
-        Expensive repository intelligence is reused through the
-        shared agent runner and answer generator.
-
-        Conversation state itself is fresh.
+        Create one independent Phase-9 conversation while reusing this
+        runtime's repository intelligence.
         """
 
         with self._lock:
@@ -258,13 +266,6 @@ class RepositoryRuntime:
     def close(
         self,
     ) -> None:
-        """
-        Mark this repository runtime as closed.
-
-        Phase 10.1 does not destroy model/index objects manually;
-        ownership cleanup will be expanded when persistent caching
-        and lifecycle resources are introduced.
-        """
 
         with self._lock:
 
@@ -277,11 +278,12 @@ class RepositoryRuntime:
     def snapshot(
         self,
     ) -> RepositoryRuntimeSnapshot:
-        """
-        Return immutable runtime metadata.
-        """
 
         with self._lock:
+
+            fingerprint = (
+                self._fingerprint
+            )
 
             return (
                 RepositoryRuntimeSnapshot(
@@ -302,6 +304,21 @@ class RepositoryRuntime:
                     ),
                     closed=(
                         self._closed
+                    ),
+                    fingerprint_algorithm=(
+                        fingerprint.algorithm
+                        if fingerprint is not None
+                        else None
+                    ),
+                    fingerprint_value=(
+                        fingerprint.value
+                        if fingerprint is not None
+                        else None
+                    ),
+                    fingerprint_file_count=(
+                        fingerprint.file_count
+                        if fingerprint is not None
+                        else None
                     ),
                 )
             )
