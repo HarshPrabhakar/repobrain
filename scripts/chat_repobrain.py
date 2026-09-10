@@ -1,75 +1,18 @@
 from __future__ import annotations
 
 import argparse
-import inspect
 import sys
 from pathlib import Path
-from types import ModuleType
-from typing import Any, Iterable
+from typing import Iterable
 
-
-# =============================================================================
-# RepoBrain public imports
-# =============================================================================
-
-import repobrain.agent as agent_package
-import repobrain.llm as llm_package
-
-from repobrain.answering import (
-    GroundedAnswerGenerator,
+from repobrain.application import (
+    RepositoryRuntimeBuilder,
 )
-
 from repobrain.conversation import (
     StatefulGroundedAnsweringOrchestrator,
-    StatefulRepoBrainOrchestrator,
     UnresolvedFollowUpReferenceError,
 )
 
-from repobrain.embeddings import (
-    SentenceTransformerEmbeddingProvider,
-)
-
-from repobrain.evidence import (
-    EvidenceAssembler,
-    EvidenceBudget,
-)
-
-from repobrain.graph import (
-    RepositoryKnowledgeGraph,
-)
-
-from repobrain.indexing import (
-    PythonSymbolResolver,
-    SymbolIndex,
-)
-
-from repobrain.ingestion import (
-    RepositoryScanner,
-)
-
-from repobrain.parsing import (
-    PythonRepositoryAnalyzer,
-)
-
-from repobrain.retrieval import (
-    GraphEvidenceExpander,
-    HybridRetrievalEngine,
-    SemanticSearchEngine,
-    SymbolSearchEngine,
-)
-
-from repobrain.retrieval.chunks import (
-    RepositoryChunkBuilder,
-)
-
-from repobrain.retrieval.lexical import (
-    BM25Index,
-)
-
-
-# =============================================================================
-# Constants
-# =============================================================================
 
 WIDTH = 110
 SEPARATOR = "=" * WIDTH
@@ -79,38 +22,30 @@ DEFAULT_OLLAMA_MODEL = "qwen2.5-coder:14b"
 
 DEFAULT_MAX_EVIDENCE_ITEMS = 8
 DEFAULT_MAX_CHARACTERS = 24_000
-
 DEFAULT_RETRIEVAL_TOP_K = 20
 DEFAULT_MAX_AGENT_STEPS = 4
 DEFAULT_MAX_GRAPH_RELATIONS = 20
 
 
 # =============================================================================
-# Generic helpers
+# Generic display helpers
 # =============================================================================
+
 
 def print_header(
     title: str,
 ) -> None:
+
     print()
     print(SEPARATOR)
     print(title)
     print(SEPARATOR)
 
 
-def print_step(
-    step: int,
-    total: int,
-    message: str,
-) -> None:
-    print(
-        f"[{step}/{total}] {message}"
-    )
-
-
 def enum_value(
     value: object,
 ) -> str:
+
     if value is None:
         return "(none)"
 
@@ -129,6 +64,7 @@ def enum_value(
 def format_values(
     values: Iterable[object] | None,
 ) -> str:
+
     if values is None:
         return "(none)"
 
@@ -142,7 +78,9 @@ def format_values(
     if not items:
         return "(none)"
 
-    return ", ".join(items)
+    return ", ".join(
+        items
+    )
 
 
 def first_existing_attribute(
@@ -150,8 +88,14 @@ def first_existing_attribute(
     *names: str,
     default: object = None,
 ) -> object:
+
     for name in names:
-        if hasattr(obj, name):
+
+        if hasattr(
+            obj,
+            name,
+        ):
+
             return getattr(
                 obj,
                 name,
@@ -161,836 +105,73 @@ def first_existing_attribute(
 
 
 # =============================================================================
-# Compatibility helpers
-#
-# RepoBrain's core phases are intentionally modular.  The verified Phase
-# 1-6 APIs below are called directly.  For the agent and Ollama adapters,
-# constructor keyword discovery is kept local to this CLI so this script
-# cannot break simply because a constructor parameter has a slightly
-# different public name.
+# Phase 10.2 runtime-builder progress display
 # =============================================================================
 
-def find_class(
-    module: ModuleType,
-    *,
-    preferred_names: tuple[str, ...],
-    name_contains: tuple[str, ...] = (),
-) -> type:
-    """
-    Find an exported class from a RepoBrain package.
 
-    Preferred names are checked first.  The fallback only considers
-    classes actually exported by the package.
+def print_build_progress(
+    step: int,
+    total: int,
+    message: str,
+    details: dict[str, object],
+) -> None:
+    """
+    CLI-only rendering of RepositoryRuntimeBuilder progress.
+
+    The application builder reports structured progress.
+    This function decides how that progress appears in the terminal.
     """
 
-    for name in preferred_names:
-        value = getattr(
-            module,
-            name,
-            None,
+    if not details:
+
+        print(
+            f"[{step}/{total}] {message}"
         )
 
-        if inspect.isclass(value):
-            return value
+        return
 
-    candidates: list[type] = []
-
-    for name in dir(module):
-        value = getattr(
-            module,
-            name,
-        )
-
-        if not inspect.isclass(value):
-            continue
-
-        lowered = name.lower()
-
-        if all(
-            token.lower() in lowered
-            for token in name_contains
-        ):
-            candidates.append(
-                value
-            )
-
-    if len(candidates) == 1:
-        return candidates[0]
-
-    exported = [
-        name
-        for name in dir(module)
-        if not name.startswith("_")
-    ]
-
-    raise RuntimeError(
-        "Could not determine the required RepoBrain class.\n"
-        f"Module: {module.__name__}\n"
-        f"Preferred names: {preferred_names}\n"
-        f"Available exports: {exported}"
-    )
-
-
-def construct_from_supported_kwargs(
-    cls: type,
-    *,
-    available: dict[str, object],
-) -> object:
-    """
-    Instantiate a class using only keyword arguments that its current
-    constructor actually accepts.
-
-    This prevents the CLI from guessing constructor signatures.
-    """
-
-    signature = inspect.signature(
-        cls
-    )
-
-    kwargs: dict[str, object] = {}
-    missing_required: list[str] = []
-
-    has_var_keyword = False
-
-    for name, parameter in (
-        signature.parameters.items()
-    ):
-        if name in {
-            "self",
-            "cls",
-        }:
-            continue
-
-        if (
-            parameter.kind
-            == inspect.Parameter.VAR_KEYWORD
-        ):
-            has_var_keyword = True
-            continue
-
-        if (
-            parameter.kind
-            == inspect.Parameter.VAR_POSITIONAL
-        ):
-            continue
-
-        if name in available:
-            kwargs[name] = available[name]
-            continue
-
-        if (
-            parameter.default
-            is inspect.Parameter.empty
-        ):
-            missing_required.append(
-                name
-            )
-
-    if missing_required:
-        raise RuntimeError(
-            f"Cannot construct {cls.__module__}.{cls.__name__}.\n"
-            "Unsupported required constructor parameter(s): "
-            f"{', '.join(missing_required)}\n"
-            f"Signature: {signature}"
-        )
-
-    if has_var_keyword:
-        # Do not blindly forward every possible alias.
-        # Explicitly matched parameters above remain the safest choice.
-        pass
-
-    return cls(
-        **kwargs
-    )
-
-
-# =============================================================================
-# Agent construction
-# =============================================================================
-
-def build_agent_tools(
-    *,
-    hybrid_engine: HybridRetrievalEngine,
-    graph: RepositoryKnowledgeGraph,
-    evidence_assembler: EvidenceAssembler,
-    symbol_index: SymbolIndex,
-    chunks: list[object],
-    resolved_analysis: object,
-) -> object:
-    """
-    Build RepoBrain's deterministic Phase-7 tool layer.
-    """
-
-    tools_class = find_class(
-        agent_package,
-        preferred_names=(
-            "AgentToolbox",
-            "RepoBrainAgentTools",
-            "AgentTools",
-            "RepositoryAgentTools",
-        ),
-        name_contains=(
-            "tool",
-        ),
-    )
-
-    available = {
-        # Hybrid retrieval aliases
-        "hybrid_engine": hybrid_engine,
-        "hybrid_retriever": hybrid_engine,
-        "retrieval_engine": hybrid_engine,
-        "retriever": hybrid_engine,
-
-        # Graph aliases
-        "graph": graph,
-        "knowledge_graph": graph,
-        "repository_graph": graph,
-
-        # Evidence
-        "evidence_assembler": evidence_assembler,
-        "assembler": evidence_assembler,
-
-        # Symbols
-        "symbol_index": symbol_index,
-        "index": symbol_index,
-
-        # Optional repository material
-        "chunks": chunks,
-        "symbols": (
-            resolved_analysis.symbols
-        ),
-        "relationships": (
-            resolved_analysis.relationships
-        ),
+    labels = {
+        "files_discovered": "Files discovered",
+        "symbols": "Symbols",
+        "relationships": "Relationships",
+        "resolved_symbols": "Resolved symbols",
+        "chunks": "Chunks",
+        "indexed_symbols": "Indexed symbols",
+        "bm25_documents": "BM25 documents",
+        "embedding_model": "Embedding model",
+        "device": "Device",
+        "dimension": "Dimension",
+        "semantic_index": "Semantic index",
+        "graph_nodes": "Graph nodes",
+        "graph_edges": "Graph edges",
+        "hybrid_engine": "Hybrid engine",
+        "evidence_layer": "Evidence layer",
+        "agent": "Agent",
+        "stateful_agent": "Stateful agent",
+        "llm_model": "LLM model",
+        "grounded_qa": "Grounded QA",
     }
 
-    return construct_from_supported_kwargs(
-        tools_class,
-        available=available,
-    )
-
-
-def build_base_agent(
-    *,
-    tools: object,
-    hybrid_engine: HybridRetrievalEngine,
-    graph: RepositoryKnowledgeGraph,
-    evidence_assembler: EvidenceAssembler,
-    symbol_index: SymbolIndex,
-    max_steps: int,
-    retrieval_top_k: int,
-    max_graph_relations: int,
-) -> object:
-    """
-    Construct the existing deterministic Phase-7 orchestrator.
-    """
-
-    orchestrator_class = find_class(
-        agent_package,
-        preferred_names=(
-            "RepoBrainAgentOrchestrator",
-            "AgentOrchestrator",
-            "DeterministicRepoBrainAgent",
-            "RepoBrainAgent",
-        ),
-        name_contains=(
-            "orchestrator",
-        ),
-    )
-
-    available = {
-        # Tool aliases
-        "toolbox": tools,
-        "tools": tools,
-        "agent_tools": tools,
-
-        # Direct dependencies, if the orchestrator accepts them
-        "hybrid_engine": hybrid_engine,
-        "hybrid_retriever": hybrid_engine,
-        "retrieval_engine": hybrid_engine,
-
-        "graph": graph,
-        "knowledge_graph": graph,
-
-        "evidence_assembler": evidence_assembler,
-        "assembler": evidence_assembler,
-
-        "symbol_index": symbol_index,
-
-        # Bounded execution
-        "max_steps": max_steps,
-        "max_agent_steps": max_steps,
-
-        "retrieval_top_k": retrieval_top_k,
-        "top_k": retrieval_top_k,
-
-        "max_graph_relations": (
-            max_graph_relations
-        ),
-    }
-
-    return construct_from_supported_kwargs(
-        orchestrator_class,
-        available=available,
-    )
-
-
-# =============================================================================
-# Ollama construction
-# =============================================================================
-
-def build_ollama_provider(
-    *,
-    host: str,
-    model: str,
-    temperature: float,
-) -> object:
-    provider_class = find_class(
-        llm_package,
-        preferred_names=(
-            "OllamaLLMProvider",
-        ),
-        name_contains=(
-            "ollama",
-            "provider",
-        ),
-    )
-
-    available = {
-        # Host aliases
-        "host": host,
-        "base_url": host,
-        "ollama_host": host,
-        "url": host,
-
-        # Model aliases
-        "model": model,
-        "model_name": model,
-
-        # Generation
-        "temperature": temperature,
-    }
-
-    return construct_from_supported_kwargs(
-        provider_class,
-        available=available,
-    )
-
-
-# =============================================================================
-# Full RepoBrain pipeline
-# =============================================================================
-
-def build_pipeline(
-    repository_root: Path,
-    *,
-    ollama_host: str,
-    ollama_model: str,
-    temperature: float,
-    max_steps: int,
-    retrieval_top_k: int,
-    max_evidence_items: int,
-    max_characters: int,
-    max_graph_relations: int,
-) -> StatefulGroundedAnsweringOrchestrator:
-
-    total_steps = 12
-
-    # =========================================================================
-    # 1. Repository scan
-    # =========================================================================
-
-    print_step(
-        1,
-        total_steps,
-        "Scanning repository...",
-    )
-
-    scanner = (
-        RepositoryScanner()
-    )
-
-    scan_result = scanner.scan(
-        repository_root
-    )
-
-    print(
-        f"        Files discovered : "
-        f"{len(scan_result.files)}"
-    )
-
-    # =========================================================================
-    # 2. Python AST
-    # =========================================================================
-
-    print_step(
-        2,
-        total_steps,
-        "Extracting Python AST...",
-    )
-
-    analyzer = (
-        PythonRepositoryAnalyzer()
-    )
-
-    analysis = analyzer.analyze(
-        scan_result
-    )
-
-    print(
-        f"        Symbols           : "
-        f"{len(analysis.symbols)}"
-    )
-
-    print(
-        f"        Relationships     : "
-        f"{len(analysis.relationships)}"
-    )
-
-    # =========================================================================
-    # 3. Symbol resolution
-    #
-    # IMPORTANT:
-    # PythonSymbolResolver takes no constructor arguments.
-    # Repository resolution is done through resolve_repository().
-    # =========================================================================
-
-    print_step(
-        3,
-        total_steps,
-        "Resolving repository symbols...",
-    )
-
-    resolver = (
-        PythonSymbolResolver()
-    )
-
-    (
-        resolved_analysis,
-        resolution_summary,
-    ) = resolver.resolve_repository(
-        analysis
-    )
-
-    print(
-        f"        Resolved symbols  : "
-        f"{len(resolved_analysis.symbols)}"
-    )
-
-    # Keep the summary alive for diagnostics/debugging.
-    _ = resolution_summary
-
-    # =========================================================================
-    # 4. Repository chunks
-    # =========================================================================
-
-    print_step(
-        4,
-        total_steps,
-        "Building repository chunks...",
-    )
-
-    chunk_builder = (
-        RepositoryChunkBuilder()
-    )
-
-    chunks = chunk_builder.build(
-        scan_result=scan_result,
-        analysis=resolved_analysis,
-    )
-
-    print(
-        f"        Chunks            : "
-        f"{len(chunks)}"
-    )
-
-    # =========================================================================
-    # 5. Symbol index
-    #
-    # IMPORTANT:
-    # This must be created AFTER resolved_analysis exists.
-    # =========================================================================
-
-    print_step(
-        5,
-        total_steps,
-        "Building symbol index...",
-    )
-
-    symbol_index = (
-        SymbolIndex(
-            resolved_analysis.symbols
-        )
-    )
-
-    symbol_engine = (
-        SymbolSearchEngine(
-            symbol_index
-        )
-    )
-
-    print(
-        f"        Indexed symbols   : "
-        f"{len(resolved_analysis.symbols)}"
-    )
-
-    # =========================================================================
-    # 6. BM25
-    # =========================================================================
-
-    print_step(
-        6,
-        total_steps,
-        "Building BM25 index...",
-    )
-
-    lexical_engine = (
-        BM25Index(
-            chunks
-        )
-    )
-
-    print(
-        f"        BM25 documents    : "
-        f"{len(chunks)}"
-    )
-
-    # =========================================================================
-    # 7. Semantic retrieval
-    #
-    # Use the provider's validated default configuration.
-    # Your existing RepoBrain config selects CodeRankEmbed / CUDA.
-    # =========================================================================
-
-    print_step(
-        7,
-        total_steps,
-        "Loading semantic model...",
-    )
-
-    embedding_provider = (
-        SentenceTransformerEmbeddingProvider()
-    )
-
-    print(
-        f"        Embedding model   : "
-        f"{embedding_provider.model_name}"
-    )
-
-    print(
-        f"        Device            : "
-        f"{embedding_provider.device}"
-    )
-
-    print(
-        f"        Dimension         : "
-        f"{embedding_provider.dimension}"
-    )
-
-    semantic_engine = (
-        SemanticSearchEngine(
-            chunks,
-            embedding_provider,
-            symbols=(
-                resolved_analysis.symbols
-            ),
-            relationships=(
-                resolved_analysis.relationships
-            ),
-        )
-    )
-
-    print(
-        "        Semantic index    : READY"
-    )
-
-    # =========================================================================
-    # 8. Knowledge graph
-    # =========================================================================
-
-    print_step(
-        8,
-        total_steps,
-        "Building knowledge graph...",
-    )
-
-    graph = (
-        RepositoryKnowledgeGraph(
-            symbols=(
-                resolved_analysis.symbols
-            ),
-            relationships=(
-                resolved_analysis.relationships
-            ),
-        )
-    )
-
-    graph_stats = (
-        graph.stats()
-    )
-
-    node_count = first_existing_attribute(
-        graph_stats,
-        "node_count",
-        "nodes",
-        "total_nodes",
-        default=len(
-            resolved_analysis.symbols
-        ),
-    )
-
-    edge_count = first_existing_attribute(
-        graph_stats,
-        "edge_count",
-        "edges",
-        "total_edges",
-        default=0,
-    )
-
-    print(
-        f"        Graph nodes       : "
-        f"{node_count}"
-    )
-
-    print(
-        f"        Graph edges       : "
-        f"{edge_count}"
-    )
-
-    # =========================================================================
-    # 9. Hybrid retrieval
-    # =========================================================================
-
-    print_step(
-        9,
-        total_steps,
-        "Building hybrid retrieval...",
-    )
-
-    # GraphEvidenceExpander's actual constructor is discovered rather than
-    # assuming the graph parameter name.
-    graph_expander = (
-        construct_from_supported_kwargs(
-            GraphEvidenceExpander,
-            available={
-                "graph": graph,
-                "knowledge_graph": graph,
-                "repository_graph": graph,
-                "symbol_index": (
-                    symbol_index
-                ),
-            },
-        )
-    )
-
-    hybrid_engine = (
-        HybridRetrievalEngine(
-            symbol_engine=(
-                symbol_engine
-            ),
-            lexical_engine=(
-                lexical_engine
-            ),
-            semantic_engine=(
-                semantic_engine
-            ),
-            graph_expander=(
-                graph_expander
-            ),
-        )
-    )
-
-    print(
-        "        Hybrid engine     : READY"
-    )
-
-    # =========================================================================
-    # 10. Evidence assembler
-    # =========================================================================
-
-    print_step(
-        10,
-        total_steps,
-        "Building evidence assembler...",
-    )
-
-    evidence_budget = (
-        EvidenceBudget(
-            max_items=(
-                max_evidence_items
-            ),
-            max_characters=(
-                max_characters
-            ),
-        )
-    )
-
-    evidence_assembler = (
-        construct_from_supported_kwargs(
-            EvidenceAssembler,
-            available={
-                "budget": (
-                    evidence_budget
-                ),
-                "chunks": chunks,
-                "graph": graph,
-                "knowledge_graph": graph,
-                "symbol_index": (
-                    symbol_index
-                ),
-                "symbols": (
-                    resolved_analysis.symbols
-                ),
-                "relationships": (
-                    resolved_analysis
-                    .relationships
-                ),
-            },
-        )
-    )
-
-    print(
-        "        Evidence layer    : READY"
-    )
-
-    # =========================================================================
-    # 11. Deterministic RepoBrain agent
-    # =========================================================================
-
-    print_step(
-        11,
-        total_steps,
-        "Building stateful agent...",
-    )
-
-    agent_tools = build_agent_tools(
-        hybrid_engine=(
-            hybrid_engine
-        ),
-        graph=graph,
-        evidence_assembler=(
-            evidence_assembler
-        ),
-        symbol_index=(
-            symbol_index
-        ),
-        chunks=chunks,
-        resolved_analysis=(
-            resolved_analysis
-        ),
-    )
-
-    base_agent = build_base_agent(
-        tools=agent_tools,
-        hybrid_engine=(
-            hybrid_engine
-        ),
-        graph=graph,
-        evidence_assembler=(
-            evidence_assembler
-        ),
-        symbol_index=(
-            symbol_index
-        ),
-        max_steps=max_steps,
-        retrieval_top_k=(
-            retrieval_top_k
-        ),
-        max_graph_relations=(
-            max_graph_relations
-        ),
-    )
-
-    agent_run = getattr(
-        base_agent,
-        "run",
-        None,
-    )
-
-    if not callable(agent_run):
-        raise RuntimeError(
-            f"{type(base_agent).__name__} "
-            "does not expose a callable run(query) method."
+    for key, value in details.items():
+
+        label = labels.get(
+            key,
+            key.replace(
+                "_",
+                " ",
+            ).title(),
         )
 
-    stateful_agent = (
-        StatefulRepoBrainOrchestrator(
-            agent_runner=(
-                agent_run
-            )
+        print(
+            f"        {label:<18}: "
+            f"{value}"
         )
-    )
-
-    print(
-        f"        Agent             : "
-        f"{type(base_agent).__name__}"
-    )
-
-    print(
-        "        Stateful agent    : READY"
-    )
-
-    # =========================================================================
-    # 12. Grounded answering
-    # =========================================================================
-
-    print_step(
-        12,
-        total_steps,
-        "Loading grounded answer layer...",
-    )
-
-    llm_provider = build_ollama_provider(
-        host=ollama_host,
-        model=ollama_model,
-        temperature=temperature,
-    )
-
-    answer_generator = (
-        GroundedAnswerGenerator(
-            provider=(
-                llm_provider
-            )
-        )
-    )
-
-    stateful_grounded = (
-        StatefulGroundedAnsweringOrchestrator(
-            stateful_agent=(
-                stateful_agent
-            ),
-            answer_generator=(
-                answer_generator
-            ),
-        )
-    )
-
-    provider_model = (
-        first_existing_attribute(
-            llm_provider,
-            "model_name",
-            "model",
-            default=(
-                ollama_model
-            ),
-        )
-    )
-
-    print(
-        f"        LLM model         : "
-        f"{provider_model}"
-    )
-
-    print(
-        "        Grounded QA       : READY"
-    )
-
-    return stateful_grounded
 
 
 # =============================================================================
 # State display
 # =============================================================================
+
 
 def print_state(
     orchestrator: (
@@ -1007,12 +188,12 @@ def print_state(
     )
 
     print(
-        f"Conversation ID     : "
+        f"Conversation ID      : "
         f"{state.conversation_id}"
     )
 
     print(
-        f"Turn number         : "
+        f"Turn number          : "
         f"{state.turn_number}"
     )
 
@@ -1042,32 +223,32 @@ def print_state(
     )
 
     print(
-        f"Last query          : "
+        f"Last query           : "
         f"{state.last_query or '(none)'}"
     )
 
     print(
-        f"Last resolved query : "
+        f"Last resolved query  : "
         f"{state.last_resolved_query or '(none)'}"
     )
 
     print(
-        f"Last grounded       : "
+        f"Last grounded        : "
         f"{state.last_grounded}"
     )
 
     print(
-        f"Last citations      : "
+        f"Last citations       : "
         f"{format_values(state.last_citation_ids)}"
     )
 
     print(
-        f"Invalid citations   : "
+        f"Invalid citations    : "
         f"{format_values(state.last_invalid_citation_ids)}"
     )
 
     print(
-        f"History length      : "
+        f"History length       : "
         f"{len(state.history)}"
     )
 
@@ -1075,6 +256,7 @@ def print_state(
 # =============================================================================
 # History display
 # =============================================================================
+
 
 def print_history(
     orchestrator: (
@@ -1091,9 +273,11 @@ def print_history(
     )
 
     if not state.history:
+
         print(
             "(no completed turns)"
         )
+
         return
 
     for turn in state.history:
@@ -1154,12 +338,14 @@ def print_history(
 # Answer display
 # =============================================================================
 
+
 def answer_text(
     answer: object,
 ) -> str:
 
     text = first_existing_attribute(
         answer,
+        "answer_text",
         "text",
         "answer",
         "content",
@@ -1270,6 +456,7 @@ def print_turn(
 # Help
 # =============================================================================
 
+
 def print_help() -> None:
 
     print_header(
@@ -1310,6 +497,7 @@ def print_help() -> None:
 # Interactive loop
 # =============================================================================
 
+
 def chat_loop(
     orchestrator: (
         StatefulGroundedAnsweringOrchestrator
@@ -1325,8 +513,12 @@ def chat_loop(
     )
 
     print(
-        "Repository indexes are loaded once and will be "
-        "reused for this session."
+        "Repository intelligence is owned by a reusable "
+        "Phase 10 runtime."
+    )
+
+    print(
+        "This conversation has independent Phase 9 state."
     )
 
     print(
@@ -1338,6 +530,7 @@ def chat_loop(
         print()
 
         try:
+
             raw_query = input(
                 "You > "
             )
@@ -1346,10 +539,13 @@ def chat_loop(
             KeyboardInterrupt,
             EOFError,
         ):
+
             print()
+
             print(
                 "RepoBrain > Goodbye."
             )
+
             return
 
         query = (
@@ -1363,50 +559,38 @@ def chat_loop(
             query.lower()
         )
 
-        # =====================================================================
-        # Quit
-        # =====================================================================
-
         if command in {
             "/quit",
             "/exit",
         }:
+
             print(
                 "RepoBrain > Goodbye."
             )
+
             return
 
-        # =====================================================================
-        # Help
-        # =====================================================================
-
         if command == "/help":
+
             print_help()
+
             continue
 
-        # =====================================================================
-        # State
-        # =====================================================================
-
         if command == "/state":
+
             print_state(
                 orchestrator
             )
+
             continue
 
-        # =====================================================================
-        # History
-        # =====================================================================
-
         if command == "/history":
+
             print_history(
                 orchestrator
             )
-            continue
 
-        # =====================================================================
-        # Clear current context
-        # =====================================================================
+            continue
 
         if command == "/clear":
 
@@ -1434,10 +618,6 @@ def chat_loop(
             )
 
             continue
-
-        # =====================================================================
-        # New conversation
-        # =====================================================================
 
         if command == "/new":
 
@@ -1471,10 +651,6 @@ def chat_loop(
 
             continue
 
-        # =====================================================================
-        # Normal repository question
-        # =====================================================================
-
         try:
 
             turn = (
@@ -1499,6 +675,7 @@ def chat_loop(
             )
 
             if reference:
+
                 print(
                     f"Reference: "
                     f"{reference!r}"
@@ -1534,6 +711,7 @@ def chat_loop(
 # =============================================================================
 # CLI arguments
 # =============================================================================
+
 
 def parse_args() -> argparse.Namespace:
 
@@ -1642,6 +820,7 @@ def parse_args() -> argparse.Namespace:
 # Entry point
 # =============================================================================
 
+
 def main() -> int:
 
     args = (
@@ -1674,41 +853,6 @@ def main() -> int:
 
         return 2
 
-    if args.max_steps < 1:
-        print(
-            "--max-steps must be >= 1",
-            file=sys.stderr,
-        )
-        return 2
-
-    if args.retrieval_top_k < 1:
-        print(
-            "--retrieval-top-k must be >= 1",
-            file=sys.stderr,
-        )
-        return 2
-
-    if args.max_evidence_items < 1:
-        print(
-            "--max-evidence-items must be >= 1",
-            file=sys.stderr,
-        )
-        return 2
-
-    if args.max_characters < 1:
-        print(
-            "--max-characters must be >= 1",
-            file=sys.stderr,
-        )
-        return 2
-
-    if args.max_graph_relations < 1:
-        print(
-            "--max-graph-relations must be >= 1",
-            file=sys.stderr,
-        )
-        return 2
-
     print_header(
         "REPOBRAIN"
     )
@@ -1729,32 +873,46 @@ def main() -> int:
 
     try:
 
-        orchestrator = build_pipeline(
-            repository_root,
-            ollama_host=(
-                args.ollama_host
-            ),
-            ollama_model=(
-                args.model
-            ),
-            temperature=(
-                args.temperature
-            ),
-            max_steps=(
-                args.max_steps
-            ),
-            retrieval_top_k=(
-                args.retrieval_top_k
-            ),
-            max_evidence_items=(
-                args.max_evidence_items
-            ),
-            max_characters=(
-                args.max_characters
-            ),
-            max_graph_relations=(
-                args.max_graph_relations
-            ),
+        builder = (
+            RepositoryRuntimeBuilder(
+                ollama_host=(
+                    args.ollama_host
+                ),
+                ollama_model=(
+                    args.model
+                ),
+                temperature=(
+                    args.temperature
+                ),
+                max_steps=(
+                    args.max_steps
+                ),
+                retrieval_top_k=(
+                    args.retrieval_top_k
+                ),
+                max_evidence_items=(
+                    args.max_evidence_items
+                ),
+                max_characters=(
+                    args.max_characters
+                ),
+                max_graph_relations=(
+                    args.max_graph_relations
+                ),
+                progress_callback=(
+                    print_build_progress
+                ),
+            )
+        )
+
+        runtime = (
+            builder.build(
+                repository_root
+            )
+        )
+
+        orchestrator = (
+            runtime.create_conversation()
         )
 
     except Exception as exc:
@@ -1772,14 +930,33 @@ def main() -> int:
 
         return 1
 
+    snapshot = (
+        runtime.snapshot()
+    )
+
+    print()
+
+    print(
+        f"Runtime ID : "
+        f"{snapshot.runtime_id}"
+    )
+
+    print(
+        f"Conversations created : "
+        f"{snapshot.conversation_count}"
+    )
+
     chat_loop(
         orchestrator
     )
+
+    runtime.close()
 
     return 0
 
 
 if __name__ == "__main__":
+
     raise SystemExit(
         main()
     )
