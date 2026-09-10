@@ -71,10 +71,12 @@ class GroundedAnswerGenerator:
         self,
         result: AgentRunResult,
     ) -> GroundedAnswer:
+        """
+        Generate one grounded answer.
 
-        # -------------------------------------------------------------
-        # Deterministic graph questions
-        # -------------------------------------------------------------
+        CALLERS and CALLEES are deterministic graph questions
+        and therefore never invoke the LLM.
+        """
 
         if (
             result.state.intent
@@ -82,17 +84,12 @@ class GroundedAnswerGenerator:
                 AgentIntent.CALLERS,
                 AgentIntent.CALLEES,
             }
-            and result.graph_facts
         ):
             return (
-                self._generate_graph_answer(
+                self._generate_deterministic_graph_answer(
                     result
                 )
             )
-
-        # -------------------------------------------------------------
-        # Normal LLM-backed answer
-        # -------------------------------------------------------------
 
         return (
             self._generate_llm_answer(
@@ -104,58 +101,116 @@ class GroundedAnswerGenerator:
     # Deterministic graph answer
     # =====================================================================
 
-    def _generate_graph_answer(
+    def _generate_deterministic_graph_answer(
         self,
         result: AgentRunResult,
     ) -> GroundedAnswer:
+        """
+        Render CALLERS/CALLEES directly from deterministic
+        repository graph facts.
+
+        An empty graph result is still a valid structural result:
+        it means no resolved internal relationship was found.
+        """
+
+        intent = (
+            result.state.intent
+        )
 
         facts = list(
             result.graph_facts
         )
 
-        citations: list[
-            AnswerCitation
-        ] = []
+        resolved_name = (
+            result.resolved_qualified_name
+            or "the resolved symbol"
+        )
+
+        evidence_count = (
+            len(
+                result.evidence.items
+            )
+            if (
+                result.evidence
+                is not None
+            )
+            else 0
+        )
+
+        # -----------------------------------------------------------------
+        # Empty graph result
+        # -----------------------------------------------------------------
+
+        if not facts:
+
+            if (
+                intent
+                == AgentIntent.CALLERS
+            ):
+                answer_text = (
+                    f"`{resolved_name}` has no resolved "
+                    "internal repository callers."
+                )
+
+            elif (
+                intent
+                == AgentIntent.CALLEES
+            ):
+                answer_text = (
+                    f"`{resolved_name}` does not call any "
+                    "resolved internal repository symbols."
+                )
+
+            else:
+                raise ValueError(
+                    "Deterministic graph answering supports only "
+                    "CALLERS and CALLEES."
+                )
+
+            return GroundedAnswer(
+                query=(
+                    result.state.query
+                ),
+                answer_text=(
+                    answer_text
+                ),
+                model_name=(
+                    "deterministic-graph"
+                ),
+                citations=[],
+                invalid_citation_ids=[],
+                evidence_items_available=(
+                    evidence_count
+                ),
+                graph_facts_available=0,
+                grounded=True,
+            )
+
+        # -----------------------------------------------------------------
+        # Non-empty CALLERS
+        # -----------------------------------------------------------------
 
         answer_lines: list[str] = []
 
-        # -------------------------------------------------------------
-        # CALLERS
-        # -------------------------------------------------------------
-
         if (
-            result.state.intent
+            intent
             == AgentIntent.CALLERS
         ):
-
-            target_name = (
-                result.resolved_qualified_name
-            )
-
-            if (
-                target_name is None
-                and facts
-            ):
-                target_name = (
-                    facts[0]
-                    .target_qualified_name
-                )
 
             if len(facts) == 1:
 
                 fact = facts[0]
 
                 answer_lines.append(
-                    f"`{fact.target_qualified_name}` "
-                    f"is called by "
+                    f"`{resolved_name}` is called by "
                     f"`{fact.source_qualified_name}`. "
-                    f"[G1]"
+                    "[G1]"
                 )
 
             else:
 
                 answer_lines.append(
-                    f"`{target_name}` is called by:"
+                    f"`{resolved_name}` is called by:"
                 )
 
                 for index, fact in enumerate(
@@ -169,46 +224,55 @@ class GroundedAnswerGenerator:
                         f"[G{index}]"
                     )
 
-        # -------------------------------------------------------------
-        # CALLEES
-        # -------------------------------------------------------------
+        # -----------------------------------------------------------------
+        # Non-empty CALLEES
+        # -----------------------------------------------------------------
 
         elif (
-            result.state.intent
+            intent
             == AgentIntent.CALLEES
         ):
 
-            source_name = (
-                result.resolved_qualified_name
-            )
+            if len(facts) == 1:
 
-            if (
-                source_name is None
-                and facts
-            ):
-                source_name = (
-                    facts[0]
-                    .source_qualified_name
-                )
-
-            answer_lines.append(
-                f"`{source_name}` directly calls:"
-            )
-
-            for index, fact in enumerate(
-                facts,
-                start=1,
-            ):
+                fact = facts[0]
 
                 answer_lines.append(
-                    f"{index}. "
-                    f"`{fact.target_qualified_name}` "
-                    f"[G{index}]"
+                    f"`{resolved_name}` calls "
+                    f"`{fact.target_qualified_name}`. "
+                    "[G1]"
                 )
 
-        # -------------------------------------------------------------
-        # Graph citations
-        # -------------------------------------------------------------
+            else:
+
+                answer_lines.append(
+                    f"`{resolved_name}` calls:"
+                )
+
+                for index, fact in enumerate(
+                    facts,
+                    start=1,
+                ):
+
+                    answer_lines.append(
+                        f"{index}. "
+                        f"`{fact.target_qualified_name}` "
+                        f"[G{index}]"
+                    )
+
+        else:
+            raise ValueError(
+                "Deterministic graph answering supports only "
+                "CALLERS and CALLEES."
+            )
+
+        # -----------------------------------------------------------------
+        # Deterministic graph citations
+        # -----------------------------------------------------------------
+
+        citations: list[
+            AnswerCitation
+        ] = []
 
         for index, fact in enumerate(
             facts,
@@ -224,43 +288,29 @@ class GroundedAnswerGenerator:
                 )
             )
 
-        evidence_count = (
-            len(
-                result.evidence.items
-            )
-            if (
-                result.evidence
-                is not None
-            )
-            else 0
-        )
-
         return GroundedAnswer(
-            query=result.state.query,
-
-            answer_text="\n".join(
-                answer_lines
+            query=(
+                result.state.query
             ),
-
+            answer_text=(
+                "\n".join(
+                    answer_lines
+                )
+            ),
             model_name=(
                 "deterministic-graph"
             ),
-
-            citations=citations,
-
+            citations=(
+                citations
+            ),
             invalid_citation_ids=[],
-
             evidence_items_available=(
                 evidence_count
             ),
-
             graph_facts_available=(
                 len(facts)
             ),
-
-            grounded=bool(
-                citations
-            ),
+            grounded=True,
         )
 
     # =====================================================================
@@ -281,9 +331,9 @@ class GroundedAnswerGenerator:
             )
         )
 
-        # -------------------------------------------------------------
+        # -----------------------------------------------------------------
         # First generation attempt
-        # -------------------------------------------------------------
+        # -----------------------------------------------------------------
 
         answer_text = (
             self.provider.generate(
@@ -291,7 +341,9 @@ class GroundedAnswerGenerator:
                     self.prompt_builder
                     .SYSTEM_INSTRUCTIONS
                 ),
-                input_text=prompt,
+                input_text=(
+                    prompt
+                ),
             )
         )
 
@@ -300,7 +352,9 @@ class GroundedAnswerGenerator:
             invalid_citations,
         ) = (
             self._validate_citations(
-                answer_text=answer_text,
+                answer_text=(
+                    answer_text
+                ),
                 citation_lookup=(
                     citation_lookup
                 ),
@@ -315,13 +369,17 @@ class GroundedAnswerGenerator:
             len(
                 bundle.items
             )
-            if bundle
-            is not None
+            if (
+                bundle
+                is not None
+            )
             else 0
         )
 
-        graph_count = len(
-            result.graph_facts
+        graph_count = (
+            len(
+                result.graph_facts
+            )
         )
 
         has_repository_context = (
@@ -329,17 +387,13 @@ class GroundedAnswerGenerator:
             or graph_count > 0
         )
 
-        # -------------------------------------------------------------
+        # -----------------------------------------------------------------
         # One-pass citation repair
         #
-        # Retry only when:
-        #
-        # - repository context exists
-        # - no valid citations were produced
-        #
-        # This covers the common case where the model answered from
-        # evidence but simply forgot citation syntax.
-        # -------------------------------------------------------------
+        # Retry when repository context exists and:
+        #   - no valid citation exists, OR
+        #   - at least one invalid citation exists.
+        # -----------------------------------------------------------------
 
         if (
             has_repository_context
@@ -351,8 +405,12 @@ class GroundedAnswerGenerator:
 
             repair_prompt = (
                 self._build_citation_repair_prompt(
-                    original_prompt=prompt,
-                    original_answer=answer_text,
+                    original_prompt=(
+                        prompt
+                    ),
+                    original_answer=(
+                        answer_text
+                    ),
                 )
             )
 
@@ -382,13 +440,6 @@ class GroundedAnswerGenerator:
                 )
             )
 
-            # ---------------------------------------------------------
-            # Accept the repair only if it improves grounding.
-            #
-            # If the retry still has no valid citations, we preserve
-            # the repaired text but Grounded will remain False.
-            # ---------------------------------------------------------
-
             answer_text = (
                 repaired_answer_text
             )
@@ -410,31 +461,30 @@ class GroundedAnswerGenerator:
         )
 
         return GroundedAnswer(
-            query=result.state.query,
-
-            answer_text=answer_text,
-
+            query=(
+                result.state.query
+            ),
+            answer_text=(
+                answer_text
+            ),
             model_name=(
                 self.provider.model_name
             ),
-
             citations=(
                 valid_citations
             ),
-
             invalid_citation_ids=(
                 invalid_citations
             ),
-
             evidence_items_available=(
                 evidence_count
             ),
-
             graph_facts_available=(
                 graph_count
             ),
-
-            grounded=grounded,
+            grounded=(
+                grounded
+            ),
         )
 
     # =====================================================================
@@ -551,9 +601,9 @@ class GroundedAnswerGenerator:
 
                 continue
 
-            # ---------------------------------------------------------
+            # -------------------------------------------------------------
             # Source evidence
-            # ---------------------------------------------------------
+            # -------------------------------------------------------------
 
             if isinstance(
                 referenced_object,
@@ -565,31 +615,25 @@ class GroundedAnswerGenerator:
                         citation_id=(
                             citation_id
                         ),
-
                         citation_kind=(
                             AnswerCitationKind.SOURCE
                         ),
-
                         evidence_id=(
                             referenced_object
                             .evidence_id
                         ),
-
                         relative_path=(
                             referenced_object
                             .relative_path
                         ),
-
                         start_line=(
                             referenced_object
                             .start_line
                         ),
-
                         end_line=(
                             referenced_object
                             .end_line
                         ),
-
                         qualified_name=(
                             referenced_object
                             .qualified_name
@@ -599,9 +643,9 @@ class GroundedAnswerGenerator:
 
                 continue
 
-            # ---------------------------------------------------------
+            # -------------------------------------------------------------
             # Graph evidence
-            # ---------------------------------------------------------
+            # -------------------------------------------------------------
 
             if isinstance(
                 referenced_object,
@@ -613,7 +657,6 @@ class GroundedAnswerGenerator:
                         citation_id=(
                             citation_id
                         ),
-
                         fact=(
                             referenced_object
                         ),
@@ -646,27 +689,21 @@ class GroundedAnswerGenerator:
             citation_id=(
                 citation_id
             ),
-
             citation_kind=(
                 AnswerCitationKind.GRAPH
             ),
-
             relationship_type=(
                 fact.relationship_type
             ),
-
             source_symbol_id=(
                 fact.source_symbol_id
             ),
-
             source_qualified_name=(
                 fact.source_qualified_name
             ),
-
             target_symbol_id=(
                 fact.target_symbol_id
             ),
-
             target_qualified_name=(
                 fact.target_qualified_name
             ),
@@ -681,7 +718,8 @@ class GroundedAnswerGenerator:
         answer_text: str,
     ) -> list[str]:
         """
-        Extract unique E#/G# citations while preserving first-use order.
+        Extract unique E#/G# citations while preserving
+        first-use order.
         """
 
         seen: set[str] = set()
