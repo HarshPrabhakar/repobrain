@@ -14,6 +14,17 @@ from repobrain.models.agent import (
 )
 
 
+class RelationshipFocusType(StrEnum):
+    """
+    Deterministic relationship target currently available
+    for conversational follow-up resolution.
+    """
+
+    CALLER = "CALLER"
+
+    CALLEE = "CALLEE"
+
+
 class ConversationTurn(BaseModel):
     """
     One completed RepoBrain investigation turn.
@@ -46,9 +57,30 @@ class ConversationTurn(BaseModel):
 
     intent: AgentIntent | None = None
 
+    # ------------------------------------------------------------------
+    # Primary symbol focus
+    # ------------------------------------------------------------------
+
     focused_symbol_id: str | None = None
 
     focused_qualified_name: str | None = None
+
+    # ------------------------------------------------------------------
+    # Deterministic relationship focus
+    # ------------------------------------------------------------------
+
+    relationship_focus_type: (
+        RelationshipFocusType
+        | None
+    ) = None
+
+    relationship_symbol_id: str | None = None
+
+    relationship_qualified_name: str | None = None
+
+    # ------------------------------------------------------------------
+    # Grounding metadata
+    # ------------------------------------------------------------------
 
     grounded: bool | None = None
 
@@ -63,6 +95,13 @@ class InvestigationState(BaseModel):
 
     This represents repository-investigation state rather than
     unrestricted conversational memory.
+
+    Phase 9.6 adds a second bounded focus:
+
+        relationship focus
+
+    This is populated only from unambiguous deterministic
+    repository graph results.
     """
 
     model_config = ConfigDict(
@@ -81,7 +120,7 @@ class InvestigationState(BaseModel):
     )
 
     # ------------------------------------------------------------------
-    # Current focus
+    # Current primary symbol focus
     # ------------------------------------------------------------------
 
     current_symbol_id: str | None = None
@@ -89,12 +128,25 @@ class InvestigationState(BaseModel):
     current_qualified_name: str | None = None
 
     # ------------------------------------------------------------------
-    # Previous focus
+    # Previous primary symbol focus
     # ------------------------------------------------------------------
 
     previous_symbol_id: str | None = None
 
     previous_qualified_name: str | None = None
+
+    # ------------------------------------------------------------------
+    # Current deterministic relationship focus
+    # ------------------------------------------------------------------
+
+    relationship_focus_type: (
+        RelationshipFocusType
+        | None
+    ) = None
+
+    relationship_symbol_id: str | None = None
+
+    relationship_qualified_name: str | None = None
 
     # ------------------------------------------------------------------
     # Previous investigation metadata
@@ -126,10 +178,12 @@ class InvestigationState(BaseModel):
     ] = ()
 
     @property
-    def has_focus(self) -> bool:
+    def has_focus(
+        self,
+    ) -> bool:
         """
         Return True when the investigation currently has a
-        known repository-symbol focus.
+        known primary repository-symbol focus.
         """
 
         return (
@@ -137,6 +191,26 @@ class InvestigationState(BaseModel):
             is not None
             or self.current_qualified_name
             is not None
+        )
+
+    @property
+    def has_relationship_focus(
+        self,
+    ) -> bool:
+        """
+        Return True when one unambiguous deterministic graph
+        relationship target is available.
+        """
+
+        return (
+            self.relationship_focus_type
+            is not None
+            and (
+                self.relationship_symbol_id
+                is not None
+                or self.relationship_qualified_name
+                is not None
+            )
         )
 
     @property
@@ -164,7 +238,9 @@ class FollowUpReferenceKind(StrEnum):
 
     PREVIOUS_FOCUS = "PREVIOUS_FOCUS"
 
-    UNSUPPORTED_RELATION = "UNSUPPORTED_RELATION"
+    CALLER_FOCUS = "CALLER_FOCUS"
+
+    CALLEE_FOCUS = "CALLEE_FOCUS"
 
 
 class FollowUpResolution(BaseModel):

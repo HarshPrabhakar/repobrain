@@ -7,6 +7,7 @@ from repobrain.models.agent import (
 from repobrain.models.conversation import (
     ConversationTurn,
     InvestigationState,
+    RelationshipFocusType,
 )
 
 
@@ -19,6 +20,7 @@ class InvestigationStateManager:
     - increment turn numbers
     - maintain current symbol focus
     - maintain previous symbol focus
+    - maintain deterministic relationship focus
     - store previous intent/query
     - retain validated grounding metadata
     - maintain bounded turn history
@@ -89,6 +91,13 @@ class InvestigationStateManager:
         intent: AgentIntent | None = None,
         focused_symbol_id: str | None = None,
         focused_qualified_name: str | None = None,
+        relationship_focus_type: (
+            RelationshipFocusType
+            | None
+        ) = None,
+        relationship_symbol_id: str | None = None,
+        relationship_qualified_name: str | None = None,
+        clear_relationship_focus: bool = False,
         grounded: bool | None = None,
         citation_ids: tuple[str, ...] = (),
         invalid_citation_ids: tuple[str, ...] = (),
@@ -96,10 +105,18 @@ class InvestigationStateManager:
         """
         Record a completed RepoBrain investigation turn.
 
-        If a new focus is supplied, it becomes the current focus and
-        the old current focus becomes the previous focus.
+        Primary symbol focus:
 
-        If no focus is supplied, the current focus is retained.
+        - a supplied focus becomes current
+        - the old current focus becomes previous
+        - no supplied focus retains current focus
+
+        Relationship focus:
+
+        - may be supplied only from deterministic graph evidence
+        - may be explicitly cleared when the relationship is ambiguous,
+          absent, or no longer contextually relevant
+        - otherwise is retained
         """
 
         normalized_query = (
@@ -134,14 +151,14 @@ class InvestigationStateManager:
             + 1
         )
 
+        # ==================================================================
+        # Primary symbol focus
+        # ==================================================================
+
         has_new_focus = (
             focused_symbol_id is not None
             or focused_qualified_name is not None
         )
-
-        # --------------------------------------------------------------
-        # New deterministic focus
-        # --------------------------------------------------------------
 
         if has_new_focus:
 
@@ -161,10 +178,6 @@ class InvestigationStateManager:
                 old_state.current_qualified_name
             )
 
-        # --------------------------------------------------------------
-        # Retain existing focus
-        # --------------------------------------------------------------
-
         else:
 
             next_current_symbol_id = (
@@ -182,6 +195,61 @@ class InvestigationStateManager:
             next_previous_qualified_name = (
                 old_state.previous_qualified_name
             )
+
+        # ==================================================================
+        # Relationship focus
+        # ==================================================================
+
+        has_new_relationship_focus = (
+            relationship_focus_type
+            is not None
+            and (
+                relationship_symbol_id
+                is not None
+                or relationship_qualified_name
+                is not None
+            )
+        )
+
+        if clear_relationship_focus:
+
+            next_relationship_focus_type = None
+
+            next_relationship_symbol_id = None
+
+            next_relationship_qualified_name = None
+
+        elif has_new_relationship_focus:
+
+            next_relationship_focus_type = (
+                relationship_focus_type
+            )
+
+            next_relationship_symbol_id = (
+                relationship_symbol_id
+            )
+
+            next_relationship_qualified_name = (
+                relationship_qualified_name
+            )
+
+        else:
+
+            next_relationship_focus_type = (
+                old_state.relationship_focus_type
+            )
+
+            next_relationship_symbol_id = (
+                old_state.relationship_symbol_id
+            )
+
+            next_relationship_qualified_name = (
+                old_state.relationship_qualified_name
+            )
+
+        # ==================================================================
+        # Turn object
+        # ==================================================================
 
         turn = ConversationTurn(
             turn_number=(
@@ -201,6 +269,15 @@ class InvestigationStateManager:
             ),
             focused_qualified_name=(
                 next_current_qualified_name
+            ),
+            relationship_focus_type=(
+                next_relationship_focus_type
+            ),
+            relationship_symbol_id=(
+                next_relationship_symbol_id
+            ),
+            relationship_qualified_name=(
+                next_relationship_qualified_name
             ),
             grounded=(
                 grounded
@@ -250,6 +327,15 @@ class InvestigationStateManager:
             previous_qualified_name=(
                 next_previous_qualified_name
             ),
+            relationship_focus_type=(
+                next_relationship_focus_type
+            ),
+            relationship_symbol_id=(
+                next_relationship_symbol_id
+            ),
+            relationship_qualified_name=(
+                next_relationship_qualified_name
+            ),
             previous_intent=(
                 intent
             ),
@@ -290,10 +376,7 @@ class InvestigationStateManager:
         Attach Phase 8 grounding validation metadata to the most
         recently recorded investigation turn.
 
-        This method does not trust raw model output.
-
-        The caller must provide citation data that has already passed
-        through GroundedAnswerGenerator validation.
+        Relationship focus must survive this immutable-state rebuild.
         """
 
         old_state = (
@@ -341,6 +424,15 @@ class InvestigationStateManager:
             focused_qualified_name=(
                 old_turn.focused_qualified_name
             ),
+            relationship_focus_type=(
+                old_turn.relationship_focus_type
+            ),
+            relationship_symbol_id=(
+                old_turn.relationship_symbol_id
+            ),
+            relationship_qualified_name=(
+                old_turn.relationship_qualified_name
+            ),
             grounded=(
                 grounded
             ),
@@ -378,6 +470,15 @@ class InvestigationStateManager:
             previous_qualified_name=(
                 old_state.previous_qualified_name
             ),
+            relationship_focus_type=(
+                old_state.relationship_focus_type
+            ),
+            relationship_symbol_id=(
+                old_state.relationship_symbol_id
+            ),
+            relationship_qualified_name=(
+                old_state.relationship_qualified_name
+            ),
             previous_intent=(
                 old_state.previous_intent
             ),
@@ -414,9 +515,6 @@ class InvestigationStateManager:
         """
         Restore a previously captured immutable InvestigationState.
 
-        Phase 9.4 uses this when answer generation fails after the
-        stateful agent has run.
-
         A failed answer should not leave behind a partially completed
         conversation turn.
         """
@@ -437,6 +535,8 @@ class InvestigationStateManager:
         """
         Clear investigation context while preserving the current
         conversation/session identifier.
+
+        Relationship focus is cleared as part of investigation context.
         """
 
         conversation_id = (

@@ -1017,17 +1017,27 @@ def print_state(
     )
 
     print(
-        f"Current symbol      : "
+        f"Current symbol       : "
         f"{state.current_qualified_name or '(none)'}"
     )
 
     print(
-        f"Previous symbol     : "
+        f"Previous symbol      : "
         f"{state.previous_qualified_name or '(none)'}"
     )
 
     print(
-        f"Previous intent     : "
+        f"Relationship type    : "
+        f"{enum_value(state.relationship_focus_type)}"
+    )
+
+    print(
+        f"Relationship symbol  : "
+        f"{state.relationship_qualified_name or '(none)'}"
+    )
+
+    print(
+        f"Previous intent      : "
         f"{enum_value(state.previous_intent)}"
     )
 
@@ -1110,6 +1120,16 @@ def print_history(
         print(
             f"  Focus      : "
             f"{turn.focused_qualified_name or '(none)'}"
+        )
+
+        print(
+            f"  Relation   : "
+            f"{enum_value(turn.relationship_focus_type)}"
+        )
+
+        print(
+            f"  Rel. Focus : "
+            f"{turn.relationship_qualified_name or '(none)'}"
         )
 
         print(
@@ -1218,6 +1238,16 @@ def print_turn(
     print(
         f"Current focus        : "
         f"{state_after.current_qualified_name or '(none)'}"
+    )
+
+    print(
+        f"Relationship type    : "
+        f"{enum_value(state_after.relationship_focus_type)}"
+    )
+
+    print(
+        f"Relationship focus   : "
+        f"{state_after.relationship_qualified_name or '(none)'}"
     )
 
     print(

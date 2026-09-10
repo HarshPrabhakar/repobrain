@@ -13,38 +13,46 @@ from repobrain.models.agent import (
 
 from repobrain.models.conversation import (
     InvestigationState,
+    RelationshipFocusType,
 )
 
 
 def test_new_investigation_state_is_empty() -> None:
 
-    state = InvestigationState()
+    state = (
+        InvestigationState()
+    )
 
     assert state.turn_number == 0
 
+    assert state.current_symbol_id is None
+
+    assert state.current_qualified_name is None
+
+    assert state.previous_symbol_id is None
+
+    assert state.previous_qualified_name is None
+
+    assert state.previous_intent is None
+
     assert (
-        state.current_symbol_id
+        state.relationship_focus_type
         is None
     )
 
     assert (
-        state.current_qualified_name
+        state.relationship_symbol_id
         is None
     )
 
     assert (
-        state.previous_symbol_id
+        state.relationship_qualified_name
         is None
     )
 
     assert (
-        state.previous_qualified_name
-        is None
-    )
-
-    assert (
-        state.previous_intent
-        is None
+        state.has_relationship_focus
+        is False
     )
 
     assert state.history == ()
@@ -105,10 +113,7 @@ def test_record_turn_sets_initial_focus() -> None:
         == AgentIntent.CALLERS
     )
 
-    assert (
-        state.last_grounded
-        is True
-    )
+    assert state.last_grounded is True
 
     assert (
         state.last_citation_ids
@@ -120,6 +125,146 @@ def test_record_turn_sets_initial_focus() -> None:
     assert len(
         state.history
     ) == 1
+
+
+def test_relationship_focus_can_be_recorded() -> None:
+
+    manager = (
+        InvestigationStateManager()
+    )
+
+    state = manager.record_turn(
+        query=(
+            "Who calls _calculate_sha256?"
+        ),
+        intent=(
+            AgentIntent.CALLERS
+        ),
+        focused_symbol_id=(
+            "symbol-sha"
+        ),
+        focused_qualified_name=(
+            "pkg.Scanner._calculate_sha256"
+        ),
+        relationship_focus_type=(
+            RelationshipFocusType.CALLER
+        ),
+        relationship_symbol_id=(
+            "symbol-caller"
+        ),
+        relationship_qualified_name=(
+            "pkg.Scanner._build_file_metadata"
+        ),
+    )
+
+    assert (
+        state.relationship_focus_type
+        == RelationshipFocusType.CALLER
+    )
+
+    assert (
+        state.relationship_symbol_id
+        == "symbol-caller"
+    )
+
+    assert (
+        state.relationship_qualified_name
+        == "pkg.Scanner._build_file_metadata"
+    )
+
+    assert (
+        state.has_relationship_focus
+        is True
+    )
+
+    assert (
+        state.history[-1]
+        .relationship_qualified_name
+        == "pkg.Scanner._build_file_metadata"
+    )
+
+
+def test_relationship_focus_can_be_cleared() -> None:
+
+    manager = (
+        InvestigationStateManager()
+    )
+
+    manager.record_turn(
+        query="Who calls function?",
+        relationship_focus_type=(
+            RelationshipFocusType.CALLER
+        ),
+        relationship_symbol_id="caller",
+        relationship_qualified_name="pkg.caller",
+    )
+
+    state = manager.record_turn(
+        query="Another question.",
+        clear_relationship_focus=True,
+    )
+
+    assert (
+        state.relationship_focus_type
+        is None
+    )
+
+    assert (
+        state.relationship_symbol_id
+        is None
+    )
+
+    assert (
+        state.relationship_qualified_name
+        is None
+    )
+
+
+def test_grounding_update_preserves_relationship_focus() -> None:
+
+    manager = (
+        InvestigationStateManager()
+    )
+
+    manager.record_turn(
+        query="Who calls function?",
+        relationship_focus_type=(
+            RelationshipFocusType.CALLER
+        ),
+        relationship_symbol_id="caller",
+        relationship_qualified_name="pkg.caller",
+    )
+
+    state = (
+        manager
+        .update_last_turn_grounding(
+            grounded=True,
+            citation_ids=(
+                "G1",
+            ),
+        )
+    )
+
+    assert (
+        state.relationship_focus_type
+        == RelationshipFocusType.CALLER
+    )
+
+    assert (
+        state.relationship_symbol_id
+        == "caller"
+    )
+
+    assert (
+        state.relationship_qualified_name
+        == "pkg.caller"
+    )
+
+    assert (
+        state.history[-1]
+        .relationship_qualified_name
+        == "pkg.caller"
+    )
 
 
 def test_new_focus_moves_old_focus_to_previous() -> None:
@@ -169,9 +314,7 @@ def test_new_focus_moves_old_focus_to_previous() -> None:
 
     assert (
         state.current_qualified_name
-        == (
-            "pkg.Scanner._build_file_metadata"
-        )
+        == "pkg.Scanner._build_file_metadata"
     )
 
     assert (
@@ -181,9 +324,7 @@ def test_new_focus_moves_old_focus_to_previous() -> None:
 
     assert (
         state.previous_qualified_name
-        == (
-            "pkg.Scanner._calculate_sha256"
-        )
+        == "pkg.Scanner._calculate_sha256"
     )
 
 
@@ -277,6 +418,15 @@ def test_clear_context_preserves_conversation_id() -> None:
         focused_qualified_name=(
             "pkg.symbol"
         ),
+        relationship_focus_type=(
+            RelationshipFocusType.CALLER
+        ),
+        relationship_symbol_id=(
+            "symbol-caller"
+        ),
+        relationship_qualified_name=(
+            "pkg.caller"
+        ),
     )
 
     old_id = (
@@ -298,6 +448,11 @@ def test_clear_context_preserves_conversation_id() -> None:
     assert state.history == ()
 
     assert state.has_focus is False
+
+    assert (
+        state.has_relationship_focus
+        is False
+    )
 
 
 def test_new_conversation_changes_conversation_id() -> None:
@@ -323,6 +478,11 @@ def test_new_conversation_changes_conversation_id() -> None:
     assert state.turn_number == 0
 
     assert state.history == ()
+
+    assert (
+        state.has_relationship_focus
+        is False
+    )
 
 
 def test_history_helpers() -> None:
@@ -394,10 +554,6 @@ def test_history_helpers() -> None:
         previous.query
         == "Question two"
     )
-
-    assert len(
-        recent
-    ) == 2
 
     assert [
         turn.query

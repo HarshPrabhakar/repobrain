@@ -7,6 +7,7 @@ from repobrain.models.conversation import (
     FollowUpReferenceKind,
     FollowUpResolution,
     InvestigationState,
+    RelationshipFocusType,
 )
 
 
@@ -31,24 +32,19 @@ class DeterministicFollowUpResolver:
     Resolve bounded conversational references using RepoBrain's
     deterministic InvestigationState.
 
-    Examples:
+    Supported focus classes:
 
-        "Where is that defined?"
+    - current symbol
+    - previous symbol
+    - one unambiguous caller
+    - one unambiguous callee
 
-    becomes:
+    The resolver never:
 
-        "Where is
-        repobrain.ingestion.scanner.RepositoryScanner._calculate_sha256
-        defined?"
-
-    The resolver is deliberately conservative.
-
-    It does not:
-
-    - call an LLM
-    - perform repository retrieval
-    - inspect source code
-    - guess ambiguous references
+    - calls an LLM
+    - performs repository retrieval
+    - performs graph traversal
+    - guesses among multiple relationship targets
     """
 
     # ==================================================================
@@ -93,32 +89,29 @@ class DeterministicFollowUpResolver:
     )
 
     # ==================================================================
-    # Relationship references intentionally unsupported for now
+    # Relationship references
     # ==================================================================
 
-    _UNSUPPORTED_RELATION_TEXT = (
+    _CALLER_REFERENCE_TEXT = (
+        "the caller's",
+        "that caller's",
+        "this caller's",
         "the caller",
         "that caller",
         "this caller",
+    )
+
+    _CALLEE_REFERENCE_TEXT = (
+        "the callee's",
+        "that callee's",
+        "this callee's",
         "the callee",
         "that callee",
         "this callee",
     )
 
     # ==================================================================
-    # Bare "this" / "that" handling
-    #
-    # A bare demonstrative is only considered referential when the next
-    # token strongly suggests that the user is referring back to an
-    # already-known subject.
-    #
-    # This prevents ordinary phrases such as:
-    #
-    #     this project
-    #     this repository
-    #     this architecture
-    #
-    # from being mistaken for conversation references.
+    # Bare this / that validation
     # ==================================================================
 
     _BARE_REFERENCE_ALLOWED_NEXT_WORDS = frozenset(
@@ -174,9 +167,6 @@ class DeterministicFollowUpResolver:
         """
         Resolve one query against deterministic investigation state.
 
-        A query with no conversational reference passes through
-        unchanged.
-
         A conversational reference that cannot safely be resolved
         returns unresolved_reference=True.
         """
@@ -194,7 +184,7 @@ class DeterministicFollowUpResolver:
         )
 
         # --------------------------------------------------------------
-        # No conversational reference.
+        # No conversational reference
         # --------------------------------------------------------------
 
         if match_result is None:
@@ -217,34 +207,7 @@ class DeterministicFollowUpResolver:
         )
 
         # --------------------------------------------------------------
-        # Relationship references are not yet represented by explicit
-        # relationship-focus state.
-        # --------------------------------------------------------------
-
-        if (
-            pattern.kind
-            == FollowUpReferenceKind.UNSUPPORTED_RELATION
-        ):
-
-            return FollowUpResolution(
-                original_query=(
-                    normalized_query
-                ),
-                resolved_query=(
-                    normalized_query
-                ),
-                used_context=False,
-                reference_kind=(
-                    FollowUpReferenceKind.UNSUPPORTED_RELATION
-                ),
-                reference_text=(
-                    reference_text
-                ),
-                unresolved_reference=True,
-            )
-
-        # --------------------------------------------------------------
-        # Current focus
+        # Current primary focus
         # --------------------------------------------------------------
 
         if (
@@ -261,7 +224,7 @@ class DeterministicFollowUpResolver:
             )
 
         # --------------------------------------------------------------
-        # Previous focus
+        # Previous primary focus
         # --------------------------------------------------------------
 
         elif (
@@ -277,13 +240,70 @@ class DeterministicFollowUpResolver:
                 state.previous_qualified_name
             )
 
+        # --------------------------------------------------------------
+        # Caller relationship focus
+        # --------------------------------------------------------------
+
+        elif (
+            pattern.kind
+            == FollowUpReferenceKind.CALLER_FOCUS
+        ):
+
+            if (
+                state.relationship_focus_type
+                == RelationshipFocusType.CALLER
+            ):
+
+                symbol_id = (
+                    state.relationship_symbol_id
+                )
+
+                qualified_name = (
+                    state.relationship_qualified_name
+                )
+
+            else:
+
+                symbol_id = None
+
+                qualified_name = None
+
+        # --------------------------------------------------------------
+        # Callee relationship focus
+        # --------------------------------------------------------------
+
+        elif (
+            pattern.kind
+            == FollowUpReferenceKind.CALLEE_FOCUS
+        ):
+
+            if (
+                state.relationship_focus_type
+                == RelationshipFocusType.CALLEE
+            ):
+
+                symbol_id = (
+                    state.relationship_symbol_id
+                )
+
+                qualified_name = (
+                    state.relationship_qualified_name
+                )
+
+            else:
+
+                symbol_id = None
+
+                qualified_name = None
+
         else:
 
             symbol_id = None
+
             qualified_name = None
 
         # --------------------------------------------------------------
-        # Query rewriting requires a qualified name.
+        # Query rewriting requires deterministic qualified name
         # --------------------------------------------------------------
 
         if not qualified_name:
@@ -305,6 +325,30 @@ class DeterministicFollowUpResolver:
                 unresolved_reference=True,
             )
 
+        replacement = (
+            qualified_name
+        )
+
+        # --------------------------------------------------------------
+        # Possessive relation references
+        #
+        # "that caller's implementation"
+        #
+        # becomes:
+        #
+        # "pkg.module.function implementation"
+        # --------------------------------------------------------------
+
+        if (
+            reference_text
+            .lower()
+            .endswith("'s")
+        ):
+
+            replacement = (
+                qualified_name
+            )
+
         resolved_query = (
             self._replace_reference(
                 query=(
@@ -312,7 +356,7 @@ class DeterministicFollowUpResolver:
                 ),
                 match=match,
                 replacement=(
-                    qualified_name
+                    replacement
                 ),
             )
         )
@@ -357,17 +401,17 @@ class DeterministicFollowUpResolver:
         ] = []
 
         # --------------------------------------------------------------
-        # Unsupported relationships first.
+        # Relationship phrases first.
         #
-        # Example:
+        # This is important because:
         #
         #     "that caller"
         #
-        # must not be consumed by the shorter "that" pattern.
+        # must not be consumed by the shorter "that".
         # --------------------------------------------------------------
 
         for phrase in (
-            cls._UNSUPPORTED_RELATION_TEXT
+            cls._CALLER_REFERENCE_TEXT
         ):
 
             patterns.append(
@@ -379,14 +423,37 @@ class DeterministicFollowUpResolver:
                     ),
                     kind=(
                         FollowUpReferenceKind
-                        .UNSUPPORTED_RELATION
+                        .CALLER_FOCUS
                     ),
-                    phrase=phrase,
+                    phrase=(
+                        phrase
+                    ),
+                )
+            )
+
+        for phrase in (
+            cls._CALLEE_REFERENCE_TEXT
+        ):
+
+            patterns.append(
+                _ReferencePattern(
+                    expression=(
+                        cls._compile_phrase(
+                            phrase
+                        )
+                    ),
+                    kind=(
+                        FollowUpReferenceKind
+                        .CALLEE_FOCUS
+                    ),
+                    phrase=(
+                        phrase
+                    ),
                 )
             )
 
         # --------------------------------------------------------------
-        # Previous-focus phrases before generic current-focus ones.
+        # Previous focus before generic current focus
         # --------------------------------------------------------------
 
         for phrase in (
@@ -404,12 +471,14 @@ class DeterministicFollowUpResolver:
                         FollowUpReferenceKind
                         .PREVIOUS_FOCUS
                     ),
-                    phrase=phrase,
+                    phrase=(
+                        phrase
+                    ),
                 )
             )
 
         # --------------------------------------------------------------
-        # Current-focus phrases.
+        # Current focus
         # --------------------------------------------------------------
 
         for phrase in (
@@ -427,7 +496,9 @@ class DeterministicFollowUpResolver:
                         FollowUpReferenceKind
                         .CURRENT_FOCUS
                     ),
-                    phrase=phrase,
+                    phrase=(
+                        phrase
+                    ),
                 )
             )
 
@@ -440,9 +511,10 @@ class DeterministicFollowUpResolver:
         phrase: str,
     ) -> re.Pattern[str]:
         """
-        Compile a phrase using word boundaries.
+        Compile deterministic reference phrase.
 
-        Whitespace between phrase tokens may vary.
+        The final boundary intentionally supports possessive
+        expressions such as "that caller's".
         """
 
         words = (
@@ -473,10 +545,9 @@ class DeterministicFollowUpResolver:
         re.Match[str],
     ] | None:
         """
-        Return the earliest valid conversational reference.
+        Return earliest valid conversational reference.
 
-        If several references begin at the same position, the longest
-        phrase wins.
+        If several begin at the same position, longest wins.
         """
 
         candidates: list[
@@ -500,18 +571,6 @@ class DeterministicFollowUpResolver:
 
             if match is None:
                 continue
-
-            # ----------------------------------------------------------
-            # Bare "this" and "that" need extra context checking.
-            #
-            # Examples:
-            #
-            #   "Where is that defined?"
-            #       -> valid conversational reference
-            #
-            #   "What is this project?"
-            #       -> ordinary English, NOT a follow-up reference
-            # ----------------------------------------------------------
 
             if (
                 pattern.phrase
@@ -540,7 +599,6 @@ class DeterministicFollowUpResolver:
             )
 
         if not candidates:
-
             return None
 
         candidates.sort(
@@ -571,22 +629,8 @@ class DeterministicFollowUpResolver:
         match: re.Match[str],
     ) -> bool:
         """
-        Determine whether bare "this" or "that" is acting as a
-        conversational pronoun rather than as a determiner.
-
-        Examples:
-
-            "Where is that defined?"
-                -> True
-
-            "Explain that."
-                -> True
-
-            "What is this project?"
-                -> False
-
-            "How does this system work?"
-                -> False
+        Determine whether bare this/that is acting as a
+        conversational pronoun rather than a determiner.
         """
 
         remainder = (
@@ -596,27 +640,14 @@ class DeterministicFollowUpResolver:
             .lstrip()
         )
 
-        # --------------------------------------------------------------
-        # End of sentence / punctuation:
-        #
-        #     Explain that.
-        #     Show this?
-        # --------------------------------------------------------------
-
         if not remainder:
-
             return True
 
         if (
             remainder[0]
             in ".,?!;:"
         ):
-
             return True
-
-        # --------------------------------------------------------------
-        # Look at the immediate next word.
-        # --------------------------------------------------------------
 
         next_word_match = (
             re.match(
