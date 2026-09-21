@@ -11,6 +11,7 @@ from repobrain.conversation import (
 
 from repobrain.models.application import (
     RepositoryFingerprint,
+    RepositoryRuntimeDiagnostics,
     RepositoryRuntimeSnapshot,
 )
 
@@ -19,8 +20,7 @@ class AgentRunner(
     Protocol
 ):
     """
-    Minimal interface required from the existing
-    deterministic RepoBrain agent.
+    Minimal interface required from the existing deterministic RepoBrain agent.
     """
 
     def __call__(
@@ -34,8 +34,7 @@ class AnswerGenerator(
     Protocol
 ):
     """
-    Minimal interface required from RepoBrain's grounded
-    answer generator.
+    Minimal interface required from RepoBrain's grounded answer generator.
     """
 
     def generate(
@@ -58,11 +57,8 @@ class RepositoryRuntime:
     """
     Long-lived application runtime for one repository.
 
-    Repository lifetime and conversation lifetime are deliberately
-    separate.
-
-    Phase 10.3 additionally attaches the repository content fingerprint
-    that was valid when this runtime was built.
+    Phase 10.6 attaches immutable build diagnostics without exposing
+    mutable retrieval, graph, or model internals.
     """
 
     def __init__(
@@ -72,6 +68,7 @@ class RepositoryRuntime:
         agent_runner: AgentRunner,
         answer_generator: AnswerGenerator,
         fingerprint: RepositoryFingerprint | None = None,
+        diagnostics: RepositoryRuntimeDiagnostics | None = None,
     ) -> None:
 
         normalized_root = (
@@ -94,28 +91,16 @@ class RepositoryRuntime:
                 f"{normalized_root}"
             )
 
-        self._repository_root = (
-            normalized_root
-        )
-
-        self._agent_runner = (
-            agent_runner
-        )
-
-        self._answer_generator = (
-            answer_generator
-        )
-
-        self._fingerprint = (
-            fingerprint
-        )
+        self._repository_root = normalized_root
+        self._agent_runner = agent_runner
+        self._answer_generator = answer_generator
+        self._fingerprint = fingerprint
+        self._diagnostics = diagnostics
 
         self._runtime_id = (
             RepositoryRuntimeSnapshot(
-                repository_root=(
-                    str(
-                        normalized_root
-                    )
+                repository_root=str(
+                    normalized_root
                 )
             )
             .runtime_id
@@ -123,13 +108,9 @@ class RepositoryRuntime:
 
         self._created_snapshot = (
             RepositoryRuntimeSnapshot(
-                runtime_id=(
-                    self._runtime_id
-                ),
-                repository_root=(
-                    str(
-                        normalized_root
-                    )
+                runtime_id=self._runtime_id,
+                repository_root=str(
+                    normalized_root
                 ),
                 fingerprint_algorithm=(
                     fingerprint.algorithm
@@ -150,46 +131,36 @@ class RepositoryRuntime:
         )
 
         self._conversation_count = 0
-
         self._closed = False
-
-        self._lock = (
-            RLock()
-        )
-
-    # ==================================================================
-    # Properties
-    # ==================================================================
+        self._lock = RLock()
 
     @property
     def runtime_id(
         self,
     ) -> str:
 
-        return (
-            self._runtime_id
-        )
+        return self._runtime_id
 
     @property
     def repository_root(
         self,
     ) -> Path:
 
-        return (
-            self._repository_root
-        )
+        return self._repository_root
 
     @property
     def fingerprint(
         self,
     ) -> RepositoryFingerprint | None:
-        """
-        Fingerprint that was valid when this runtime was built.
-        """
 
-        return (
-            self._fingerprint
-        )
+        return self._fingerprint
+
+    @property
+    def diagnostics(
+        self,
+    ) -> RepositoryRuntimeDiagnostics | None:
+
+        return self._diagnostics
 
     @property
     def conversation_count(
@@ -197,10 +168,7 @@ class RepositoryRuntime:
     ) -> int:
 
         with self._lock:
-
-            return (
-                self._conversation_count
-            )
+            return self._conversation_count
 
     @property
     def closed(
@@ -208,32 +176,19 @@ class RepositoryRuntime:
     ) -> bool:
 
         with self._lock:
-
-            return (
-                self._closed
-            )
-
-    # ==================================================================
-    # Conversation construction
-    # ==================================================================
+            return self._closed
 
     def create_conversation(
         self,
     ) -> StatefulGroundedAnsweringOrchestrator:
-        """
-        Create one independent Phase-9 conversation while reusing this
-        runtime's repository intelligence.
-        """
 
         with self._lock:
 
             if self._closed:
 
-                raise (
-                    RepositoryRuntimeClosedError(
-                        "Cannot create a conversation "
-                        "from a closed repository runtime."
-                    )
+                raise RepositoryRuntimeClosedError(
+                    "Cannot create a conversation "
+                    "from a closed repository runtime."
                 )
 
             stateful_agent = (
@@ -259,21 +214,12 @@ class RepositoryRuntime:
 
             return conversation
 
-    # ==================================================================
-    # Runtime lifecycle
-    # ==================================================================
-
     def close(
         self,
     ) -> None:
 
         with self._lock:
-
             self._closed = True
-
-    # ==================================================================
-    # Diagnostics
-    # ==================================================================
 
     def snapshot(
         self,
@@ -281,44 +227,34 @@ class RepositoryRuntime:
 
         with self._lock:
 
-            fingerprint = (
-                self._fingerprint
-            )
+            fingerprint = self._fingerprint
 
-            return (
-                RepositoryRuntimeSnapshot(
-                    runtime_id=(
-                        self._runtime_id
-                    ),
-                    repository_root=(
-                        str(
-                            self._repository_root
-                        )
-                    ),
-                    created_at=(
-                        self._created_snapshot
-                        .created_at
-                    ),
-                    conversation_count=(
-                        self._conversation_count
-                    ),
-                    closed=(
-                        self._closed
-                    ),
-                    fingerprint_algorithm=(
-                        fingerprint.algorithm
-                        if fingerprint is not None
-                        else None
-                    ),
-                    fingerprint_value=(
-                        fingerprint.value
-                        if fingerprint is not None
-                        else None
-                    ),
-                    fingerprint_file_count=(
-                        fingerprint.file_count
-                        if fingerprint is not None
-                        else None
-                    ),
-                )
+            return RepositoryRuntimeSnapshot(
+                runtime_id=self._runtime_id,
+                repository_root=str(
+                    self._repository_root
+                ),
+                created_at=(
+                    self._created_snapshot
+                    .created_at
+                ),
+                conversation_count=(
+                    self._conversation_count
+                ),
+                closed=self._closed,
+                fingerprint_algorithm=(
+                    fingerprint.algorithm
+                    if fingerprint is not None
+                    else None
+                ),
+                fingerprint_value=(
+                    fingerprint.value
+                    if fingerprint is not None
+                    else None
+                ),
+                fingerprint_file_count=(
+                    fingerprint.file_count
+                    if fingerprint is not None
+                    else None
+                ),
             )

@@ -96,6 +96,11 @@ include = [
 
 
 [tool.pytest.ini_options]
+filterwarnings = [
+    "ignore:The anyio\\.abc\\.BlockingPortal alias is deprecated, use anyio\\.from_thread\\.BlockingPortal instead\\.:DeprecationWarning:starlette\\.testclient",
+]
+
+
 testpaths = [
     "tests",
 ]

@@ -12,6 +12,7 @@ from repobrain.answering import GroundedAnswerGenerator
 from repobrain.application.fingerprint import RepositoryFingerprinter
 from repobrain.application.runtime import RepositoryRuntime
 from repobrain.embeddings import SentenceTransformerEmbeddingProvider
+from repobrain.models.application import RepositoryRuntimeDiagnostics
 from repobrain.evidence import EvidenceAssembler, EvidenceBudget
 from repobrain.graph import RepositoryKnowledgeGraph
 from repobrain.indexing import PythonSymbolResolver, SymbolIndex
@@ -638,6 +639,66 @@ class RepositoryRuntimeBuilder:
             ),
         )
 
+        runtime_diagnostics = (
+            RepositoryRuntimeDiagnostics(
+                files_discovered=(
+                    len(
+                        scan_result.files
+                    )
+                ),
+                symbols=(
+                    len(
+                        resolved_analysis.symbols
+                    )
+                ),
+                relationships=(
+                    len(
+                        resolved_analysis.relationships
+                    )
+                ),
+                chunks=(
+                    len(
+                        chunks
+                    )
+                ),
+                bm25_documents=(
+                    len(
+                        chunks
+                    )
+                ),
+                graph_nodes=(
+                    int(
+                        node_count
+                    )
+                ),
+                graph_edges=(
+                    int(
+                        edge_count
+                    )
+                ),
+                embedding_model=(
+                    str(
+                        embedding_provider.model_name
+                    )
+                ),
+                embedding_device=(
+                    str(
+                        embedding_provider.device
+                    )
+                ),
+                embedding_dimension=(
+                    int(
+                        embedding_provider.dimension
+                    )
+                ),
+                llm_model=(
+                    str(
+                        provider_model
+                    )
+                ),
+            )
+        )
+
         return RepositoryRuntime(
             repository_root=(
                 repository_root
@@ -650,6 +711,9 @@ class RepositoryRuntimeBuilder:
             ),
             fingerprint=(
                 fingerprint
+            ),
+            diagnostics=(
+                runtime_diagnostics
             ),
         )
 
@@ -1123,3 +1187,6 @@ class RepositoryRuntimeBuilder:
             )
 
         return normalized_root
+
+
+
