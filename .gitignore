@@ -36,3 +36,10 @@ data/
 # Python package metadata
 *.egg-info/
 .eggs/
+
+.env
+venv/
+.venv/
+__pycache__/
+.pytest_cache/
+*.pyc
