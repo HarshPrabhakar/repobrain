@@ -1,0 +1,20 @@
+{
+  "retrieval": [
+    {"query": "calculate_tax", "expected_path": "payments.py"},
+    {"query": "checkout total price", "expected_path": "payments.py"},
+    {"query": "refund amount", "expected_path": "payments.py"},
+    {"query": "save_record", "expected_path": "storage.py"},
+    {"query": "serialize record persistent storage", "expected_path": "storage.py"},
+    {"query": "process_record", "expected_path": "storage.py"}
+  ],
+  "graph": [
+    {"query": "Who calls calculate_tax?", "expected_names": ["checkout"]},
+    {"query": "What does checkout call?", "expected_names": ["calculate_tax"]},
+    {"query": "Who calls save_record?", "expected_names": ["process_record"]},
+    {"query": "What does process_record call?", "expected_names": ["save_record"]}
+  ],
+  "explanations": [
+    {"query": "Explain calculate_tax", "expected_path": "payments.py"},
+    {"query": "Explain save_record", "expected_path": "storage.py"}
+  ]
+}

@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
+import hashlib
+import json
+
 import faiss
 import numpy as np
 
@@ -58,6 +61,8 @@ class SemanticSearchEngine:
         chunks: list[CodeChunk],
         embedding_provider: EmbeddingProvider,
         *,
+        index_store=None,
+        cache_namespace: str = "",
         symbols: Iterable[
             CodeSymbol
         ] | None = None,
@@ -70,6 +75,8 @@ class SemanticSearchEngine:
         ) = None,
     ) -> None:
 
+        self._index_store = index_store
+        self._cache_namespace = cache_namespace
         self.chunks = list(
             chunks
         )
@@ -133,6 +140,17 @@ class SemanticSearchEngine:
             in self.chunks
         ]
 
+        cache_key = hashlib.sha256(json.dumps(
+            [self._cache_namespace, texts], ensure_ascii=False
+        ).encode()).hexdigest()
+        if self._index_store is not None:
+            raw = self._index_store.get("faiss", cache_key)
+            if raw is not None:
+                index = faiss.deserialize_index(np.frombuffer(raw, dtype=np.uint8).copy())
+                if index.d == self._dimension and index.ntotal == len(self.chunks):
+                    self._index = index
+                    return
+
         embeddings = (
             self.embedding_provider
             .embed_documents(
@@ -149,9 +167,9 @@ class SemanticSearchEngine:
             )
         )
 
-        self._index.add(
-            embeddings
-        )
+        self._index.add(embeddings)
+        if self._index_store is not None:
+            self._index_store.put("faiss", cache_key, faiss.serialize_index(self._index).tobytes())
 
     # =========================================================
     # Search

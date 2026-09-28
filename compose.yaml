@@ -1,0 +1,21 @@
+services:
+  repobrain:
+    build: .
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      REPOBRAIN_OLLAMA_HOST: http://host.docker.internal:11434
+      REPOBRAIN_OLLAMA_MODEL: ${REPOBRAIN_OLLAMA_MODEL:-qwen2.5-coder:14b}
+      REPOBRAIN_INDEX_DIR: /data/indexes
+      REPOBRAIN_EMBEDDING_DEVICE: cpu
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - repobrain-data:/data
+      - type: bind
+        source: ${REPOBRAIN_REPOSITORIES_DIR:-.}
+        target: /repositories
+        read_only: true
+    restart: unless-stopped
+volumes:
+  repobrain-data:

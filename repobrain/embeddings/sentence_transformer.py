@@ -3,8 +3,6 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 import numpy as np
-import torch
-from sentence_transformers import SentenceTransformer
 
 from repobrain.embeddings.base import (
     EmbeddingProvider,
@@ -83,6 +81,8 @@ def _normalize_device(
     Resolve the execution device.
     """
 
+    import torch
+
     if (
         device is None
         or device.strip().lower() == "auto"
@@ -143,6 +143,8 @@ class SentenceTransformerEmbeddingProvider(
         trust_remote_code: bool = True,
         query_prefix: str = QUERY_PREFIX,
     ) -> None:
+
+        from sentence_transformers import SentenceTransformer
 
         normalized_model_name = (
             model_name.strip()
@@ -455,6 +457,8 @@ class SentenceTransformerEmbeddingProvider(
                 ),
                 dtype=np.float32,
             )
+
+        import torch
 
         try:
             embeddings = (

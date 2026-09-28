@@ -392,7 +392,7 @@ def test_dashboard_contains_repository_and_chat_controls() -> None:
     assert "Open repository" in body
     assert "Start session" in body
     assert "Ask RepoBrain" in body
-    assert "/repositories/open" in body
+    assert "/indexing/jobs" in body
     assert "/sessions" in body
     assert "/query/ask" in body
 

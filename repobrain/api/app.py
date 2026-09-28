@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from pathlib import Path
+import os
+from repobrain.api.indexing import IndexingJobs, create_indexing_router
 from typing import AsyncIterator
 
 from fastapi import FastAPI
@@ -36,6 +39,10 @@ def create_app(
         application=service
     )
 
+    jobs = IndexingJobs(service)
+    index_dir = getattr(getattr(service, "_runtime_builder", None), "index_dir",
+                        Path(os.getenv("REPOBRAIN_INDEX_DIR", str(Path.home() / ".cache" / "repobrain"))))
+
     @asynccontextmanager
     async def lifespan(
         app: FastAPI,
@@ -44,9 +51,11 @@ def create_app(
         app.state.repobrain_service = service
         app.state.repobrain_transport = transport
 
-        yield
-
-        service.close_all()
+        try:
+            yield
+        finally:
+            jobs.close()
+            service.close_all()
 
     app = FastAPI(
         title="RepoBrain API",
@@ -101,6 +110,8 @@ def create_app(
             transport=transport
         )
     )
+
+    app.include_router(create_indexing_router(jobs, index_dir))
 
     return app
 

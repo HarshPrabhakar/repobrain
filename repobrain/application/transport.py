@@ -786,6 +786,9 @@ class RepoBrainTransport:
 
         return (
             CitationResponse(
+                source_hash=getattr(citation, "source_hash", None),
+                index_fingerprint=getattr(citation, "index_fingerprint", None),
+                source_url=getattr(citation, "source_url", None),
                 citation_id=(
                     str(
                         citation_id

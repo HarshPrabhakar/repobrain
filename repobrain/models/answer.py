@@ -41,6 +41,10 @@ class AnswerCitation(BaseModel):
     # Source evidence fields
     # ------------------------------------------------------------------
 
+    source_hash: str | None = None
+    index_fingerprint: str | None = None
+    source_url: str | None = None
+
     evidence_id: str | None = None
 
     relative_path: str | None = None

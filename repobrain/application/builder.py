@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import inspect
+import os
+import json
 from pathlib import Path
 from types import ModuleType
 from typing import Callable
@@ -63,6 +65,8 @@ class RepositoryRuntimeBuilder:
         max_characters: int = 24_000,
         max_graph_relations: int = 20,
         progress_callback: ProgressCallback | None = None,
+        index_dir: Path | None = None,
+        embedding_provider_factory: Callable | None = None,
     ) -> None:
 
         if max_steps < 1:
@@ -90,8 +94,10 @@ class RepositoryRuntimeBuilder:
                 "max_graph_relations must be >= 1"
             )
 
-        self.ollama_host = ollama_host
-        self.ollama_model = ollama_model
+        self.index_dir = Path(index_dir or os.getenv("REPOBRAIN_INDEX_DIR", str(Path.home() / ".cache" / "repobrain")))
+        self.embedding_provider_factory = embedding_provider_factory
+        self.ollama_host = os.getenv("REPOBRAIN_OLLAMA_HOST", ollama_host)
+        self.ollama_model = os.getenv("REPOBRAIN_OLLAMA_MODEL", ollama_model)
         self.temperature = temperature
         self.max_steps = max_steps
         self.retrieval_top_k = retrieval_top_k
@@ -170,11 +176,16 @@ class RepositoryRuntimeBuilder:
             PythonRepositoryAnalyzer()
         )
 
-        analysis = (
-            analyzer.analyze(
-                scan_result
-            )
-        )
+        from repobrain.persistence.store import IndexStore, CachedEmbeddingProvider
+        store = IndexStore(self.index_dir, repository_root)
+        cached_snapshot = store.get_json("snapshot", "current")
+        if cached_snapshot and cached_snapshot["fingerprint"] == fingerprint.value:
+            from repobrain.models.symbols import PythonRepositoryAnalysis
+            analysis = PythonRepositoryAnalysis.model_validate(cached_snapshot["analysis"])
+            store.parse_stats = {"parsed_files": 0, "reused_files": analysis.files_analyzed}
+        else:
+            cached_snapshot = None
+            analysis = store.analyze(scan_result, analyzer)
 
         self._progress(
             2,
@@ -204,12 +215,10 @@ class RepositoryRuntimeBuilder:
             PythonSymbolResolver()
         )
 
-        (
-            resolved_analysis,
-            resolution_summary,
-        ) = resolver.resolve_repository(
-            analysis
-        )
+        if cached_snapshot:
+            resolved_analysis, resolution_summary = analysis, None
+        else:
+            resolved_analysis, resolution_summary = resolver.resolve_repository(analysis)
 
         _ = resolution_summary
 
@@ -236,16 +245,11 @@ class RepositoryRuntimeBuilder:
             RepositoryChunkBuilder()
         )
 
-        chunks = (
-            chunk_builder.build(
-                scan_result=(
-                    scan_result
-                ),
-                analysis=(
-                    resolved_analysis
-                ),
-            )
-        )
+        if cached_snapshot:
+            from repobrain.models.retrieval import CodeChunk
+            chunks = [CodeChunk.model_validate(c) for c in cached_snapshot["chunks"]]
+        else:
+            chunks = chunk_builder.build(scan_result=scan_result, analysis=resolved_analysis)
 
         self._progress(
             4,
@@ -323,13 +327,26 @@ class RepositoryRuntimeBuilder:
         )
 
         embedding_provider = (
-            SentenceTransformerEmbeddingProvider()
+            self.embedding_provider_factory() if self.embedding_provider_factory else
+            SentenceTransformerEmbeddingProvider(device=os.getenv("REPOBRAIN_EMBEDDING_DEVICE", "auto"))
         )
+
+        namespace = json.dumps({
+            "model": embedding_provider.model_name,
+            "dimension": embedding_provider.dimension,
+            "max_sequence_length": getattr(embedding_provider, "max_sequence_length", None),
+            "normalize": getattr(embedding_provider, "normalize_embeddings", True),
+            "revision": os.getenv("REPOBRAIN_EMBEDDING_CACHE_REVISION", "1"),
+            "document_schema": 1,
+        }, sort_keys=True)
+        embedding_provider = CachedEmbeddingProvider(embedding_provider, store, namespace)
 
         semantic_engine = (
             SemanticSearchEngine(
                 chunks,
                 embedding_provider,
+                index_store=store,
+                cache_namespace=namespace,
                 symbols=(
                     resolved_analysis.symbols
                 ),
@@ -639,6 +656,9 @@ class RepositoryRuntimeBuilder:
             ),
         )
 
+        from repobrain.answering.versioned import VersionedAnswerGenerator
+        answer_generator = VersionedAnswerGenerator(answer_generator, scan_result, resolved_analysis, fingerprint)
+
         runtime_diagnostics = (
             RepositoryRuntimeDiagnostics(
                 files_discovered=(
@@ -698,6 +718,14 @@ class RepositoryRuntimeBuilder:
                 ),
             )
         )
+
+        # Refuse to publish an index assembled while files were being edited.
+        if RepositoryFingerprinter().calculate(repository_root).value != fingerprint.value:
+            raise RuntimeError("Repository changed during indexing; retry opening it.")
+        store.commit_snapshot(scan_result, resolved_analysis, chunks, fingerprint)
+        self._progress(12, "Index saved", **store.parse_stats, **store.change_stats,
+                       embedding_hits=embedding_provider.hits,
+                       embedding_misses=embedding_provider.misses)
 
         return RepositoryRuntime(
             repository_root=(
@@ -939,6 +967,11 @@ class RepositoryRuntimeBuilder:
         message: str,
         **details: object,
     ) -> None:
+
+        from repobrain.application.progress import progress_listener
+        listener = progress_listener.get()
+        if listener is not None:
+            listener(step, self.TOTAL_STEPS, message, details)
 
         if (
             self.progress_callback

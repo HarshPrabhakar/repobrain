@@ -1,0 +1,160 @@
+{
+  "mode": "offline-regression",
+  "scope": "Small fixture regression; offline models do not measure real semantic or LLM quality. Citation validity checks locations, not entailment.",
+  "cases": [
+    {
+      "kind": "retrieval",
+      "query": "calculate_tax",
+      "success": true,
+      "reciprocal_rank": 1.0,
+      "paths": [
+        "payments.py",
+        "payments.py",
+        "payments.py",
+        "storage.py",
+        "storage.py",
+        "readme.md"
+      ],
+      "seconds": 0.0011186129999032346
+    },
+    {
+      "kind": "retrieval",
+      "query": "checkout total price",
+      "success": true,
+      "reciprocal_rank": 1.0,
+      "paths": [
+        "payments.py",
+        "readme.md",
+        "storage.py",
+        "storage.py",
+        "payments.py",
+        "payments.py"
+      ],
+      "seconds": 0.0007524479999574396
+    },
+    {
+      "kind": "retrieval",
+      "query": "refund amount",
+      "success": true,
+      "reciprocal_rank": 1.0,
+      "paths": [
+        "payments.py",
+        "payments.py",
+        "payments.py",
+        "storage.py",
+        "storage.py",
+        "readme.md"
+      ],
+      "seconds": 0.000658606999991207
+    },
+    {
+      "kind": "retrieval",
+      "query": "save_record",
+      "success": true,
+      "reciprocal_rank": 1.0,
+      "paths": [
+        "storage.py",
+        "storage.py",
+        "payments.py",
+        "payments.py",
+        "payments.py",
+        "readme.md"
+      ],
+      "seconds": 0.0007203999999774169
+    },
+    {
+      "kind": "retrieval",
+      "query": "serialize record persistent storage",
+      "success": true,
+      "reciprocal_rank": 1.0,
+      "paths": [
+        "storage.py",
+        "storage.py",
+        "payments.py",
+        "payments.py",
+        "payments.py",
+        "readme.md"
+      ],
+      "seconds": 0.0007549919999974009
+    },
+    {
+      "kind": "retrieval",
+      "query": "process_record",
+      "success": true,
+      "reciprocal_rank": 1.0,
+      "paths": [
+        "storage.py",
+        "storage.py",
+        "payments.py",
+        "payments.py",
+        "readme.md",
+        "payments.py"
+      ],
+      "seconds": 0.0007798090000505908
+    },
+    {
+      "kind": "graph",
+      "query": "Who calls calculate_tax?",
+      "success": true,
+      "citation_valid": true,
+      "grounded": true,
+      "answer": "`payments.calculate_tax` is called by `payments.checkout`. [G1]",
+      "seconds": 0.0027037910000444754
+    },
+    {
+      "kind": "graph",
+      "query": "What does checkout call?",
+      "success": true,
+      "citation_valid": true,
+      "grounded": true,
+      "answer": "`payments.checkout` calls `payments.calculate_tax`. [G1]",
+      "seconds": 0.001664257000015823
+    },
+    {
+      "kind": "graph",
+      "query": "Who calls save_record?",
+      "success": true,
+      "citation_valid": true,
+      "grounded": true,
+      "answer": "`storage.save_record` is called by `storage.process_record`. [G1]",
+      "seconds": 0.000973432000023422
+    },
+    {
+      "kind": "graph",
+      "query": "What does process_record call?",
+      "success": true,
+      "citation_valid": true,
+      "grounded": true,
+      "answer": "`storage.process_record` calls `storage.save_record`. [G1]",
+      "seconds": 0.0009420349999800237
+    },
+    {
+      "kind": "explanations",
+      "query": "Explain calculate_tax",
+      "success": true,
+      "citation_valid": true,
+      "grounded": true,
+      "answer": "The implementation is provided in the cited source. [E1]",
+      "seconds": 0.001117000000022017
+    },
+    {
+      "kind": "explanations",
+      "query": "Explain save_record",
+      "success": true,
+      "citation_valid": true,
+      "grounded": true,
+      "answer": "The implementation is provided in the cited source. [E1]",
+      "seconds": 0.0009503380000523975
+    }
+  ],
+  "cold_index_seconds": 0.008414620999928957,
+  "warm_index_seconds": 0.003034440999954313,
+  "warm_embedding_reuse": true,
+  "retrieval_hit_rate": 1.0,
+  "retrieval_mrr": 1.0,
+  "graph_accuracy": 1.0,
+  "citation_location_validity": 1.0,
+  "latency_p50_seconds": 0.0009461865000162106,
+  "latency_p95_seconds": 0.0027037910000444754,
+  "passed": true
+}

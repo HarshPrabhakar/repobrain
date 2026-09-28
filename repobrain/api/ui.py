@@ -304,9 +304,12 @@ function addMessage(role, text, meta="", citations=[]) {
   const citationHtml = citations?.length
     ? `<div class="citations">${citations.map(c => {
         const loc = c.relative_path
-          ? `${c.relative_path}${c.start_line ? `:${c.start_line}` : ""}`
+          ? `${c.relative_path}${c.start_line ? `:${c.start_line}-${c.end_line || c.start_line}` : ""}`
           : (c.qualified_name || c.source_qualified_name || "");
-        return `<span class="citation">${escapeHtml(c.citation_id)}${loc ? " · " + escapeHtml(loc) : ""}</span>`;
+        const label = `${escapeHtml(c.citation_id)}${loc ? " · " + escapeHtml(loc) : ""}`;
+        return c.source_url && c.source_url.startsWith("/source?")
+          ? `<a class="citation" href="${escapeHtml(c.source_url)}" target="_blank" rel="noopener">${label}</a>`
+          : `<span class="citation">${label}</span>`;
       }).join("")}</div>`
     : "";
 
@@ -387,10 +390,17 @@ async function openRepository() {
   setBusy(true, "Building repository intelligence. This can take a moment...");
 
   try {
-    const runtime = await api("/repositories/open", {
+    let job = await api("/indexing/jobs", {
       method:"POST",
       body:JSON.stringify({repository_root:repositoryRoot}),
     });
+    while (job.status === "queued" || job.status === "running") {
+      setBusy(true, `${job.step}/${job.total} · ${job.message}`);
+      await new Promise(resolve => setTimeout(resolve, 750));
+      job = await api(`/indexing/jobs/${job.job_id}`);
+    }
+    if (job.status !== "completed") throw new Error(job.message || "Indexing failed");
+    const runtime = job.result;
 
     state.repositoryRoot = repositoryRoot;
     state.runtimeId = runtime.runtime_id;
