@@ -15,7 +15,7 @@
         "storage.py",
         "readme.md"
       ],
-      "seconds": 0.0011186129999032346
+      "seconds": 0.0019109999993816018
     },
     {
       "kind": "retrieval",
@@ -30,7 +30,7 @@
         "payments.py",
         "payments.py"
       ],
-      "seconds": 0.0007524479999574396
+      "seconds": 0.0006590000002688612
     },
     {
       "kind": "retrieval",
@@ -45,7 +45,7 @@
         "storage.py",
         "readme.md"
       ],
-      "seconds": 0.000658606999991207
+      "seconds": 0.0005778000004283967
     },
     {
       "kind": "retrieval",
@@ -60,7 +60,7 @@
         "payments.py",
         "readme.md"
       ],
-      "seconds": 0.0007203999999774169
+      "seconds": 0.0009962999993149424
     },
     {
       "kind": "retrieval",
@@ -75,7 +75,7 @@
         "payments.py",
         "readme.md"
       ],
-      "seconds": 0.0007549919999974009
+      "seconds": 0.0006378999996741186
     },
     {
       "kind": "retrieval",
@@ -90,7 +90,7 @@
         "readme.md",
         "payments.py"
       ],
-      "seconds": 0.0007798090000505908
+      "seconds": 0.0005928999999014195
     },
     {
       "kind": "graph",
@@ -99,7 +99,7 @@
       "citation_valid": true,
       "grounded": true,
       "answer": "`payments.calculate_tax` is called by `payments.checkout`. [G1]",
-      "seconds": 0.0027037910000444754
+      "seconds": 0.0030084999998507556
     },
     {
       "kind": "graph",
@@ -108,7 +108,7 @@
       "citation_valid": true,
       "grounded": true,
       "answer": "`payments.checkout` calls `payments.calculate_tax`. [G1]",
-      "seconds": 0.001664257000015823
+      "seconds": 0.0019204000000172528
     },
     {
       "kind": "graph",
@@ -117,7 +117,7 @@
       "citation_valid": true,
       "grounded": true,
       "answer": "`storage.save_record` is called by `storage.process_record`. [G1]",
-      "seconds": 0.000973432000023422
+      "seconds": 0.0011442000004535657
     },
     {
       "kind": "graph",
@@ -126,7 +126,7 @@
       "citation_valid": true,
       "grounded": true,
       "answer": "`storage.process_record` calls `storage.save_record`. [G1]",
-      "seconds": 0.0009420349999800237
+      "seconds": 0.0010044999999081483
     },
     {
       "kind": "explanations",
@@ -135,7 +135,7 @@
       "citation_valid": true,
       "grounded": true,
       "answer": "The implementation is provided in the cited source. [E1]",
-      "seconds": 0.001117000000022017
+      "seconds": 0.001107800000681891
     },
     {
       "kind": "explanations",
@@ -144,17 +144,17 @@
       "citation_valid": true,
       "grounded": true,
       "answer": "The implementation is provided in the cited source. [E1]",
-      "seconds": 0.0009503380000523975
+      "seconds": 0.0013071999992462224
     }
   ],
-  "cold_index_seconds": 0.008414620999928957,
-  "warm_index_seconds": 0.003034440999954313,
+  "cold_index_seconds": 0.09898969999994733,
+  "warm_index_seconds": 0.027376900000490423,
   "warm_embedding_reuse": true,
   "retrieval_hit_rate": 1.0,
   "retrieval_mrr": 1.0,
   "graph_accuracy": 1.0,
   "citation_location_validity": 1.0,
-  "latency_p50_seconds": 0.0009461865000162106,
-  "latency_p95_seconds": 0.0027037910000444754,
+  "latency_p50_seconds": 0.0010561500002950197,
+  "latency_p95_seconds": 0.0030084999998507556,
   "passed": true
 }
